@@ -121,6 +121,7 @@
     <div class="channel-row">
       <div class="chip" id="binarizeToggle" style="flex:1;">🔲 Sharpen text (adaptive threshold)</div>
     </div>
+    <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
     <div class="slider-row" id="binarizeParams" style="display:none;">
       <label>Sensitivity <span class="val mono" id="sensVal">6</span></label>
       <input type="range" id="sensSlider" min="1" max="60" value="6">
@@ -291,12 +292,22 @@
       var radius = Math.max(4, Math.round(Math.min(w,h)*0.04));
       var localAvg = boxBlur(stretched, w, h, radius);
       var sensitivity = parseInt(sensSlider.value,10);
+      var textCount = 0;
+      var minDiff = Infinity, maxDiff = -Infinity;
       for (var p2=0, j2=0; p2<stretched.length; p2++, j2+=4){
+        var diff = localAvg[p2] - stretched[p2];
+        if (diff<minDiff) minDiff=diff; if (diff>maxDiff) maxDiff=diff;
         var isText = stretched[p2] < (localAvg[p2] - sensitivity);
+        if (isText) textCount++;
         var val = isText ? 0 : 255;
         od[j2]=od[j2+1]=od[j2+2]=val; od[j2+3]=255;
       }
+      var diagBox = document.getElementById('diagBox');
+      diagBox.style.display = 'block';
+      var pct = (textCount/(stretched.length)*100).toFixed(1);
+      diagBox.textContent = 'flagged as text: ' + pct + '% of pixels | local contrast range seen: ' + minDiff.toFixed(1) + ' to ' + maxDiff.toFixed(1) + ' (sensitivity=' + sensitivity + ')';
     } else {
+      document.getElementById('diagBox').style.display = 'none';
       for (var p3=0, j3=0; p3<stretched.length; p3++, j3+=4){
         var vv = stretched[p3];
         od[j3]=od[j3+1]=od[j3+2]=vv; od[j3+3]=255;
