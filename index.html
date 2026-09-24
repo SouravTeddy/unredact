@@ -18,12 +18,13 @@
     --border: rgba(237,243,240,0.14);
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
-  html,body{ height:100%; }
+  html,body{ height:100%; overflow:hidden; }
   body{
     margin:0; background: var(--bg); color: var(--ink);
     font-family:'IBM Plex Sans', system-ui, sans-serif;
-    min-height:100dvh; display:flex; flex-direction:column;
+    height:100dvh; display:flex; flex-direction:column;
   }
+  header{ flex:0 0 auto; }
   .mono{ font-family:'JetBrains Mono', monospace; }
   h1,h2{ font-family:'Rajdhani', sans-serif; font-weight:700; margin:0; }
 
@@ -115,6 +116,7 @@
     <button class="btn secondary" id="uploadBtn">Upload</button>
   </div>
   <input type="file" id="fileInput" accept="image/*" capture="environment">
+  <div class="tip-card" id="frameCountBox" style="display:none;"></div>
 
   <div id="imageWrap">
     <canvas id="canvas"></canvas>
@@ -122,6 +124,12 @@
 
   <div id="stage">
     <div id="dragHint"></div>
+
+    <div class="channel-row">
+      <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
+      <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
+    </div>
+
     <div class="channel-row" id="channelRow">
       <div class="chip active" data-ch="auto">AUTO ✦</div>
       <div class="chip" data-ch="r">RED</div>
@@ -130,6 +138,8 @@
       <div class="chip" data-ch="rg">R−G</div>
       <div class="chip" data-ch="rb">R−B</div>
       <div class="chip" data-ch="gb">G−B</div>
+      <div class="chip" data-ch="sat">SAT</div>
+      <div class="chip" data-ch="val">VAL</div>
     </div>
 
     <div class="slider-row">
@@ -216,13 +226,55 @@
     return out;
   }
 
+  var capturedFrames = []; // array of ImageData, all same w/h, for multi-shot averaging
+  var fixedW = null, fixedH = null;
+  var isAddingFrame = false;
+  var frameCountBox = document.getElementById('frameCountBox');
+  var averageBtn = document.getElementById('averageBtn');
+
   document.getElementById('captureBtn').addEventListener('click', function(){
+    isAddingFrame = false;
     fileInput.setAttribute('capture','environment');
     fileInput.click();
   });
   document.getElementById('uploadBtn').addEventListener('click', function(){
+    isAddingFrame = false;
     fileInput.removeAttribute('capture');
     fileInput.click();
+  });
+  document.getElementById('addFrameBtn').addEventListener('click', function(){
+    isAddingFrame = true;
+    fileInput.setAttribute('capture','environment');
+    fileInput.click();
+  });
+
+  function updateFrameCountUI(){
+    if (capturedFrames.length >= 1){
+      frameCountBox.style.display = 'block';
+      frameCountBox.innerHTML = '<b>' + capturedFrames.length + '</b> shot' + (capturedFrames.length>1?'s':'') + ' of this spot captured. Keep the phone and paper still, add 2-3 more of the exact same spot, then average them to cancel out camera noise.';
+    }
+    averageBtn.style.display = capturedFrames.length >= 2 ? 'inline-block' : 'none';
+  }
+
+  averageBtn.addEventListener('click', function(){
+    var n = capturedFrames.length;
+    var len = capturedFrames[0].data.length;
+    var avg = new Uint8ClampedArray(len);
+    for (var i=0;i<len;i+=4){
+      var sr=0, sg=0, sb=0;
+      for (var f=0; f<n; f++){
+        sr += capturedFrames[f].data[i];
+        sg += capturedFrames[f].data[i+1];
+        sb += capturedFrames[f].data[i+2];
+      }
+      avg[i] = sr/n; avg[i+1] = sg/n; avg[i+2] = sb/n; avg[i+3] = 255;
+    }
+    var averaged = new ImageData(avg, fixedW, fixedH);
+    canvas.width = fixedW; canvas.height = fixedH;
+    ctx.putImageData(averaged, 0, 0);
+    originalImageData = averaged;
+    frameCountBox.innerHTML = '<b>Averaged ' + n + ' shots.</b> Now pick a channel below to analyze the noise-reduced result.';
+    pickBestChannelAndCompute();
   });
 
   fileInput.addEventListener('change', function(e){
@@ -230,12 +282,19 @@
     if (!file) return;
     var img = new Image();
     img.onload = function(){
-      var maxW = Math.min(1000, img.width);
-      var scale = maxW / img.width;
-      canvas.width = maxW;
-      canvas.height = img.height * scale;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      originalImageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+      if (!isAddingFrame || fixedW === null){
+        var maxW = Math.min(1000, img.width);
+        var scale = maxW / img.width;
+        fixedW = maxW;
+        fixedH = Math.round(img.height * scale);
+        capturedFrames = [];
+      }
+      canvas.width = fixedW; canvas.height = fixedH;
+      ctx.drawImage(img, 0, 0, fixedW, fixedH);
+      var frameData = ctx.getImageData(0,0,fixedW,fixedH);
+      capturedFrames.push(frameData);
+      originalImageData = frameData;
+      updateFrameCountUI();
       stage.classList.add('active');
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
@@ -259,9 +318,19 @@
         case 'rg': out[p]=Math.abs(r-g); break;
         case 'rb': out[p]=Math.abs(r-b); break;
         case 'gb': out[p]=Math.abs(g-b); break;
+        case 'sat': out[p]=rgbToSat(r,g,b); break;
+        case 'val': out[p]=Math.max(r,g,b); break;
       }
     }
     return out;
+  }
+
+  // HSV saturation, scaled to 0-255. High = strongly colored (e.g. a marker/highlighter tint).
+  // Low = neutral gray/black/white (e.g. plain ink or paper), regardless of which hue the tint is.
+  function rgbToSat(r,g,b){
+    var max = Math.max(r,g,b), min = Math.min(r,g,b);
+    if (max === 0) return 0;
+    return ((max-min)/max) * 255;
   }
 
   function stdDevOf(arr){
@@ -374,6 +443,10 @@
   document.getElementById('resetBtn').addEventListener('click', function(){
     originalImageData = null;
     channelValues = null;
+    capturedFrames = [];
+    fixedW = null; fixedH = null;
+    frameCountBox.style.display = 'none';
+    averageBtn.style.display = 'none';
     stage.classList.remove('active');
     imageWrap.classList.remove('active');
     document.querySelector('main').classList.remove('photo-active');
