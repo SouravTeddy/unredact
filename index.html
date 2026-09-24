@@ -60,7 +60,21 @@
 
   #stage{ display:none; flex-direction:column; gap:12px; }
   #stage.active{ display:flex; }
-  canvas{ width:100%; border-radius:12px; background:#000; border:1px solid var(--border); }
+  canvas{ width:100%; border-radius:12px; background:#000; border:1px solid var(--border); display:block; }
+
+  #cropWrap{ position:relative; }
+  #cropOverlay{ position:absolute; inset:0; }
+  #cropBox{
+    position:absolute; border:2px solid var(--accent-2); background:rgba(224,177,85,0.08);
+    touch-action:none;
+  }
+  .handle{
+    position:absolute; width:22px; height:22px; margin:-11px;
+    background:var(--accent-2); border-radius:50%; touch-action:none;
+    border:2px solid var(--bg);
+  }
+  .handle.tl{ top:0; left:0; } .handle.tr{ top:0; left:100%; }
+  .handle.bl{ top:100%; left:0; } .handle.br{ top:100%; left:100%; }
 
   .channel-row{ display:flex; gap:8px; }
   .chip{
@@ -95,16 +109,27 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
 
   <div id="stage">
-    <canvas id="canvas"></canvas>
+    <div id="cropWrap">
+      <canvas id="canvas"></canvas>
+      <div id="cropOverlay">
+        <div id="cropBox">
+          <div class="handle tl"></div>
+          <div class="handle tr"></div>
+          <div class="handle bl"></div>
+          <div class="handle br"></div>
+        </div>
+      </div>
+    </div>
+    <button class="btn primary" id="confirmCropBtn">✂️ Crop to this &amp; enhance</button>
 
-    <div class="channel-row">
+    <div class="channel-row" id="channelRow" style="display:none;">
       <div class="chip" data-ch="r">RED CH</div>
       <div class="chip" data-ch="g">GREEN CH</div>
       <div class="chip" data-ch="b">BLUE CH</div>
       <div class="chip active" data-ch="auto">AUTO ✦</div>
     </div>
 
-    <div class="slider-row">
+    <div class="slider-row" id="sliderRow" style="display:none;">
       <label>Contrast boost</label>
       <input type="range" id="contrastSlider" min="0" max="100" value="55">
     </div>
@@ -127,6 +152,63 @@
 
   var originalImageData = null;
   var activeChannel = 'auto';
+  var fullImg = null; // the full uncropped source image
+  var cropWrap = document.getElementById('cropWrap');
+  var cropBox = document.getElementById('cropBox');
+  var channelRow = document.getElementById('channelRow');
+  var sliderRow = document.getElementById('sliderRow');
+  var confirmCropBtn = document.getElementById('confirmCropBtn');
+
+  function setCropBoxPct(l,t,r,b){
+    cropBox.style.left = l+'%'; cropBox.style.top = t+'%';
+    cropBox.style.width = (r-l)+'%'; cropBox.style.height = (b-t)+'%';
+  }
+
+  function pct(v, total){ return Math.max(0, Math.min(100, v/total*100)); }
+
+  var dragHandle = null, dragStart = null, boxStart = null;
+  function boxRect(){
+    var s = cropBox.style;
+    return { l: parseFloat(s.left), t: parseFloat(s.top), w: parseFloat(s.width), h: parseFloat(s.height) };
+  }
+  document.querySelectorAll('.handle').forEach(function(h){
+    h.addEventListener('pointerdown', function(e){
+      dragHandle = h.className.replace('handle ','');
+      dragStart = { x:e.clientX, y:e.clientY };
+      boxStart = boxRect();
+      h.setPointerCapture(e.pointerId);
+      e.stopPropagation();
+    });
+    h.addEventListener('pointermove', function(e){
+      if (!dragHandle) return;
+      var wrapRect = cropWrap.getBoundingClientRect();
+      var dxPct = (e.clientX-dragStart.x)/wrapRect.width*100;
+      var dyPct = (e.clientY-dragStart.y)/wrapRect.height*100;
+      var l=boxStart.l, t=boxStart.t, r=boxStart.l+boxStart.w, b=boxStart.t+boxStart.h;
+      if (dragHandle.indexOf('l')>=0) l = Math.min(r-5, boxStart.l+dxPct);
+      if (dragHandle.indexOf('r')>=0) r = Math.max(l+5, boxStart.l+boxStart.w+dxPct);
+      if (dragHandle.indexOf('t')>=0) t = Math.min(b-5, boxStart.t+dyPct);
+      if (dragHandle.indexOf('b')>=0) b = Math.max(t+5, boxStart.t+boxStart.h+dyPct);
+      l=Math.max(0,l); t=Math.max(0,t); r=Math.min(100,r); b=Math.min(100,b);
+      setCropBoxPct(l,t,r,b);
+    });
+    h.addEventListener('pointerup', function(){ dragHandle = null; });
+  });
+
+  confirmCropBtn.addEventListener('click', function(){
+    var box = boxRect();
+    var sx = box.l/100*canvas.width, sy = box.t/100*canvas.height;
+    var sw = box.w/100*canvas.width, sh = box.h/100*canvas.height;
+    var cropped = ctx.getImageData(sx, sy, sw, sh);
+    canvas.width = sw; canvas.height = sh;
+    ctx.putImageData(cropped, 0, 0);
+    originalImageData = cropped;
+    document.getElementById('cropOverlay').style.display = 'none';
+    confirmCropBtn.style.display = 'none';
+    channelRow.style.display = 'flex';
+    sliderRow.style.display = 'flex';
+    pickBestChannelAndRender();
+  });
 
   document.getElementById('captureBtn').addEventListener('click', function(){
     fileInput.setAttribute('capture','environment');
@@ -147,10 +229,13 @@
       canvas.width = maxW;
       canvas.height = img.height * scale;
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      originalImageData = ctx.getImageData(0,0,canvas.width,canvas.height);
       stage.classList.add('active');
       emptyState.style.display = 'none';
-      pickBestChannelAndRender();
+      document.getElementById('cropOverlay').style.display = 'block';
+      confirmCropBtn.style.display = 'block';
+      channelRow.style.display = 'none';
+      sliderRow.style.display = 'none';
+      setCropBoxPct(10,10,90,90);
     };
     img.src = URL.createObjectURL(file);
   });
