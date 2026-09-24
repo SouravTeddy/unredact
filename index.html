@@ -62,29 +62,17 @@
   #stage.active{ display:flex; }
   canvas{ width:100%; border-radius:12px; background:#000; border:1px solid var(--border); display:block; }
 
-  #cropWrap{ position:relative; }
-  #cropOverlay{ position:absolute; inset:0; }
-  #cropBox{
-    position:absolute; border:2px solid var(--accent-2); background:rgba(224,177,85,0.08);
-    touch-action:none;
-  }
-  .handle{
-    position:absolute; width:22px; height:22px; margin:-11px;
-    background:var(--accent-2); border-radius:50%; touch-action:none;
-    border:2px solid var(--bg);
-  }
-  .handle.tl{ top:0; left:0; } .handle.tr{ top:0; left:100%; }
-  .handle.bl{ top:100%; left:0; } .handle.br{ top:100%; left:100%; }
-
-  .channel-row{ display:flex; gap:8px; }
+  .channel-row{ display:flex; gap:8px; flex-wrap:wrap; }
   .chip{
     flex:1; padding:9px 6px; text-align:center; border-radius:8px; border:1px solid var(--border);
     background:var(--surface); font-size:0.78rem; color:var(--ink-dim); cursor:pointer;
     font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:0.04em;
   }
   .chip.active{ border-color:var(--accent-2); color:var(--ink); background:var(--surface-2); }
+  .chip{ min-width:64px; }
 
   .slider-row{ display:flex; flex-direction:column; gap:4px; }
+  .slider-row .val{ float:right; color:var(--accent-2); }
   .slider-row label{ font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase; font-family:'Rajdhani',sans-serif; font-weight:600; }
   input[type=range]{ width:100%; accent-color: var(--accent); }
 
@@ -109,29 +97,25 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
 
   <div id="stage">
-    <div id="cropWrap">
-      <canvas id="canvas"></canvas>
-      <div id="cropOverlay">
-        <div id="cropBox">
-          <div class="handle tl"></div>
-          <div class="handle tr"></div>
-          <div class="handle bl"></div>
-          <div class="handle br"></div>
-        </div>
-      </div>
-    </div>
-    <button class="btn primary" id="confirmCropBtn">✂️ Crop to this &amp; enhance</button>
+    <canvas id="canvas"></canvas>
 
-    <div class="channel-row" id="channelRow" style="display:none;">
-      <div class="chip" data-ch="r">RED CH</div>
-      <div class="chip" data-ch="g">GREEN CH</div>
-      <div class="chip" data-ch="b">BLUE CH</div>
+    <div class="channel-row" id="channelRow">
       <div class="chip active" data-ch="auto">AUTO ✦</div>
+      <div class="chip" data-ch="r">RED</div>
+      <div class="chip" data-ch="g">GREEN</div>
+      <div class="chip" data-ch="b">BLUE</div>
+      <div class="chip" data-ch="rg">R−G</div>
+      <div class="chip" data-ch="rb">R−B</div>
+      <div class="chip" data-ch="gb">G−B</div>
     </div>
 
-    <div class="slider-row" id="sliderRow" style="display:none;">
-      <label>Contrast boost</label>
-      <input type="range" id="contrastSlider" min="0" max="100" value="55">
+    <div class="slider-row">
+      <label>Black point <span class="val mono" id="blackVal">0</span></label>
+      <input type="range" id="blackSlider" min="0" max="255" value="0">
+    </div>
+    <div class="slider-row">
+      <label>White point <span class="val mono" id="whiteVal">255</span></label>
+      <input type="range" id="whiteSlider" min="0" max="255" value="255">
     </div>
 
     <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
@@ -147,68 +131,15 @@
   var ctx = canvas.getContext('2d');
   var stage = document.getElementById('stage');
   var emptyState = document.getElementById('emptyState');
-  var contrastSlider = document.getElementById('contrastSlider');
   var chips = document.querySelectorAll('.chip');
+  var blackSlider = document.getElementById('blackSlider');
+  var whiteSlider = document.getElementById('whiteSlider');
+  var blackVal = document.getElementById('blackVal');
+  var whiteVal = document.getElementById('whiteVal');
 
   var originalImageData = null;
+  var channelValues = null; // Uint8ClampedArray, one value per pixel, for the currently selected channel/diff
   var activeChannel = 'auto';
-  var fullImg = null; // the full uncropped source image
-  var cropWrap = document.getElementById('cropWrap');
-  var cropBox = document.getElementById('cropBox');
-  var channelRow = document.getElementById('channelRow');
-  var sliderRow = document.getElementById('sliderRow');
-  var confirmCropBtn = document.getElementById('confirmCropBtn');
-
-  function setCropBoxPct(l,t,r,b){
-    cropBox.style.left = l+'%'; cropBox.style.top = t+'%';
-    cropBox.style.width = (r-l)+'%'; cropBox.style.height = (b-t)+'%';
-  }
-
-  function pct(v, total){ return Math.max(0, Math.min(100, v/total*100)); }
-
-  var dragHandle = null, dragStart = null, boxStart = null;
-  function boxRect(){
-    var s = cropBox.style;
-    return { l: parseFloat(s.left), t: parseFloat(s.top), w: parseFloat(s.width), h: parseFloat(s.height) };
-  }
-  document.querySelectorAll('.handle').forEach(function(h){
-    h.addEventListener('pointerdown', function(e){
-      dragHandle = h.className.replace('handle ','');
-      dragStart = { x:e.clientX, y:e.clientY };
-      boxStart = boxRect();
-      h.setPointerCapture(e.pointerId);
-      e.stopPropagation();
-    });
-    h.addEventListener('pointermove', function(e){
-      if (!dragHandle) return;
-      var wrapRect = cropWrap.getBoundingClientRect();
-      var dxPct = (e.clientX-dragStart.x)/wrapRect.width*100;
-      var dyPct = (e.clientY-dragStart.y)/wrapRect.height*100;
-      var l=boxStart.l, t=boxStart.t, r=boxStart.l+boxStart.w, b=boxStart.t+boxStart.h;
-      if (dragHandle.indexOf('l')>=0) l = Math.min(r-5, boxStart.l+dxPct);
-      if (dragHandle.indexOf('r')>=0) r = Math.max(l+5, boxStart.l+boxStart.w+dxPct);
-      if (dragHandle.indexOf('t')>=0) t = Math.min(b-5, boxStart.t+dyPct);
-      if (dragHandle.indexOf('b')>=0) b = Math.max(t+5, boxStart.t+boxStart.h+dyPct);
-      l=Math.max(0,l); t=Math.max(0,t); r=Math.min(100,r); b=Math.min(100,b);
-      setCropBoxPct(l,t,r,b);
-    });
-    h.addEventListener('pointerup', function(){ dragHandle = null; });
-  });
-
-  confirmCropBtn.addEventListener('click', function(){
-    var box = boxRect();
-    var sx = box.l/100*canvas.width, sy = box.t/100*canvas.height;
-    var sw = box.w/100*canvas.width, sh = box.h/100*canvas.height;
-    var cropped = ctx.getImageData(sx, sy, sw, sh);
-    canvas.width = sw; canvas.height = sh;
-    ctx.putImageData(cropped, 0, 0);
-    originalImageData = cropped;
-    document.getElementById('cropOverlay').style.display = 'none';
-    confirmCropBtn.style.display = 'none';
-    channelRow.style.display = 'flex';
-    sliderRow.style.display = 'flex';
-    pickBestChannelAndRender();
-  });
 
   document.getElementById('captureBtn').addEventListener('click', function(){
     fileInput.setAttribute('capture','environment');
@@ -229,63 +160,79 @@
       canvas.width = maxW;
       canvas.height = img.height * scale;
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      originalImageData = ctx.getImageData(0,0,canvas.width,canvas.height);
       stage.classList.add('active');
       emptyState.style.display = 'none';
-      document.getElementById('cropOverlay').style.display = 'block';
-      confirmCropBtn.style.display = 'block';
-      channelRow.style.display = 'none';
-      sliderRow.style.display = 'none';
-      setCropBoxPct(10,10,90,90);
+      pickBestChannelAndCompute();
     };
     img.src = URL.createObjectURL(file);
   });
 
-  function channelStdDev(data, w, h, chIdx){
-    var n = w*h, sum=0, sumSq=0;
-    for (var i=0;i<data.length;i+=4){
-      var v = data[i+chIdx];
-      sum += v; sumSq += v*v;
-    }
-    var mean = sum/n;
-    return Math.sqrt(sumSq/n - mean*mean);
-  }
-
-  function pickBestChannelAndRender(){
-    if (activeChannel === 'auto'){
-      var d = originalImageData.data, w = originalImageData.width, h = originalImageData.height;
-      var rStd = channelStdDev(d,w,h,0);
-      var gStd = channelStdDev(d,w,h,1);
-      var bStd = channelStdDev(d,w,h,2);
-      var best = rStd >= gStd && rStd >= bStd ? 'r' : (gStd >= bStd ? 'g' : 'b');
-      renderChannel(best);
-    } else {
-      renderChannel(activeChannel);
-    }
-  }
-
-  function renderChannel(ch){
-    var chIdx = ch === 'r' ? 0 : ch === 'g' ? 1 : 2;
+  // extract a single grayscale-ish value per pixel for the requested channel/diff mode
+  function extractChannel(ch){
     var src = originalImageData.data;
+    var n = src.length/4;
+    var out = new Float64Array(n);
+    for (var i=0, p=0; i<src.length; i+=4, p++){
+      var r=src[i], g=src[i+1], b=src[i+2];
+      switch(ch){
+        case 'r': out[p]=r; break;
+        case 'g': out[p]=g; break;
+        case 'b': out[p]=b; break;
+        case 'rg': out[p]=Math.abs(r-g); break;
+        case 'rb': out[p]=Math.abs(r-b); break;
+        case 'gb': out[p]=Math.abs(g-b); break;
+      }
+    }
+    return out;
+  }
+
+  function stdDevOf(arr){
+    var n=arr.length, sum=0, sumSq=0;
+    for (var i=0;i<n;i++){ sum+=arr[i]; sumSq+=arr[i]*arr[i]; }
+    var mean=sum/n;
+    return Math.sqrt(Math.max(0,sumSq/n - mean*mean));
+  }
+
+  function pickBestChannelAndCompute(){
+    var ch = activeChannel;
+    if (ch === 'auto'){
+      var candidates = ['r','g','b'];
+      var bestCh = 'r', bestStd = -1;
+      candidates.forEach(function(c){
+        var vals = extractChannel(c);
+        var sd = stdDevOf(vals);
+        if (sd > bestStd){ bestStd = sd; bestCh = c; }
+      });
+      ch = bestCh;
+    }
+    channelValues = extractChannel(ch);
+
+    var min=255, max=0;
+    for (var i=0;i<channelValues.length;i++){
+      var v = channelValues[i];
+      if (v<min) min=v; if (v>max) max=v;
+    }
+    blackSlider.value = Math.max(0, Math.round(min));
+    whiteSlider.value = Math.min(255, Math.round(max));
+    blackVal.textContent = blackSlider.value;
+    whiteVal.textContent = whiteSlider.value;
+    render();
+  }
+
+  function render(){
+    if (!channelValues) return;
+    var black = parseInt(blackSlider.value,10);
+    var white = parseInt(whiteSlider.value,10);
+    if (white <= black) white = black+1;
+    var range = white-black;
     var w = originalImageData.width, h = originalImageData.height;
     var out = ctx.createImageData(w,h);
     var od = out.data;
-
-    var min=255, max=0;
-    for (var i=0;i<src.length;i+=4){
-      var v = src[i+chIdx];
-      if (v<min) min=v; if (v>max) max=v;
-    }
-    var range = Math.max(1, max-min);
-    var boost = parseInt(contrastSlider.value,10)/100;
-    var mid = 128;
-
-    for (var j=0;j<src.length;j+=4){
-      var val = src[j+chIdx];
-      var stretched = ((val-min)/range)*255;
-      var contrasted = mid + (stretched-mid) * (1 + boost*1.5);
-      contrasted = Math.max(0, Math.min(255, contrasted));
-      od[j] = od[j+1] = od[j+2] = contrasted;
-      od[j+3] = 255;
+    for (var p=0, j=0; p<channelValues.length; p++, j+=4){
+      var v = ((channelValues[p]-black)/range)*255;
+      v = Math.max(0, Math.min(255, v));
+      od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
     }
     ctx.putImageData(out,0,0);
   }
@@ -295,16 +242,22 @@
       chips.forEach(function(c){ c.classList.remove('active'); });
       chip.classList.add('active');
       activeChannel = chip.dataset.ch;
-      if (originalImageData) pickBestChannelAndRender();
+      if (originalImageData) pickBestChannelAndCompute();
     });
   });
 
-  contrastSlider.addEventListener('input', function(){
-    if (originalImageData) pickBestChannelAndRender();
+  blackSlider.addEventListener('input', function(){
+    blackVal.textContent = blackSlider.value;
+    render();
+  });
+  whiteSlider.addEventListener('input', function(){
+    whiteVal.textContent = whiteSlider.value;
+    render();
   });
 
   document.getElementById('resetBtn').addEventListener('click', function(){
     originalImageData = null;
+    channelValues = null;
     stage.classList.remove('active');
     emptyState.style.display = 'block';
     fileInput.value = '';
