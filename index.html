@@ -32,7 +32,14 @@
   h1{ font-size:1.5rem; margin-top:2px; }
   .sub{ color:var(--ink-dim); font-size:0.85rem; margin-top:4px; max-width:56ch; line-height:1.4; }
 
-  main{ flex:1; display:flex; flex-direction:column; padding:16px 18px 24px; gap:16px; }
+  main{ flex:1; display:flex; flex-direction:column; padding:16px 18px 24px; gap:16px; min-height:0; }
+  main.photo-active{ padding-bottom:0; }
+
+  #imageWrap{
+    display:none; flex:1; min-height:0; overflow:auto;
+    border-radius:12px; background:#000; border:1px solid var(--border);
+  }
+  #imageWrap.active{ display:block; padding-bottom:48vh; }
 
   .mode-picker{ display:flex; gap:10px; }
   .mode-btn{
@@ -58,9 +65,22 @@
   .btn.secondary{ background:transparent; border:1px solid var(--border); color:var(--ink-dim); }
   input[type=file]{ display:none; }
 
-  #stage{ display:none; flex-direction:column; gap:12px; }
-  #stage.active{ display:flex; }
-  canvas{ width:100%; border-radius:12px; background:#000; border:1px solid var(--border); display:block; }
+  canvas{ width:100%; display:block; }
+
+  #stage{ display:none; flex-direction:column; gap:10px; }
+  #stage.active{
+    display:flex;
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    max-height:48vh; overflow-y:auto;
+    background:var(--surface); border-top:1px solid var(--border);
+    border-radius:16px 16px 0 0;
+    padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+    box-shadow:0 -10px 28px rgba(0,0,0,0.45);
+  }
+  #dragHint{
+    width:36px; height:4px; border-radius:2px; background:var(--border);
+    margin:0 auto 4px;
+  }
 
   .channel-row{ display:flex; gap:8px; flex-wrap:wrap; }
   .chip{
@@ -96,9 +116,12 @@
   </div>
   <input type="file" id="fileInput" accept="image/*" capture="environment">
 
-  <div id="stage">
+  <div id="imageWrap">
     <canvas id="canvas"></canvas>
+  </div>
 
+  <div id="stage">
+    <div id="dragHint"></div>
     <div class="channel-row" id="channelRow">
       <div class="chip active" data-ch="auto">AUTO ✦</div>
       <div class="chip" data-ch="r">RED</div>
@@ -139,6 +162,7 @@
   var canvas = document.getElementById('canvas');
   var ctx = canvas.getContext('2d');
   var stage = document.getElementById('stage');
+  var imageWrap = document.getElementById('imageWrap');
   var emptyState = document.getElementById('emptyState');
   var chips = document.querySelectorAll('.chip');
   var blackSlider = document.getElementById('blackSlider');
@@ -213,6 +237,8 @@
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       originalImageData = ctx.getImageData(0,0,canvas.width,canvas.height);
       stage.classList.add('active');
+      imageWrap.classList.add('active');
+      document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
       pickBestChannelAndCompute();
     };
@@ -349,6 +375,8 @@
     originalImageData = null;
     channelValues = null;
     stage.classList.remove('active');
+    imageWrap.classList.remove('active');
+    document.querySelector('main').classList.remove('photo-active');
     emptyState.style.display = 'block';
     fileInput.value = '';
   });
