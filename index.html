@@ -128,6 +128,7 @@
 
     <div class="channel-row">
       <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
+      <div class="chip" id="invertToggle">🔄 Invert</div>
     </div>
     <div class="slider-row" id="denoiseParams" style="display:none;">
       <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
@@ -136,6 +137,12 @@
     <div class="slider-row" id="extentParams" style="display:none;">
       <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
       <input type="range" id="extentSlider" min="20" max="100" value="65">
+    </div>
+
+    <div class="tip-card" id="blobTip" style="display:none; font-size:0.78rem;">A solid redaction bar shows up as one big, dense blob — real text is many smaller strokes. If a hidden word survives at all, it's most likely a faint <i>lighter</i> speck pattern inside that one big dark blob, not more darkness. This looks inside it specifically.</div>
+    <button class="btn secondary" id="invertBlobBtn" style="display:none;">🔍 Look inside the largest blob (invert &amp; re-scan)</button>
+    <div id="blobResultWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
+      <canvas id="blobResultCanvas" style="image-rendering:pixelated;"></canvas>
     </div>
 
     <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
@@ -546,6 +553,19 @@
     return { imageData: out, sizes: sizes, bboxes: bboxes, isKept: isKept, nextLabel: nextLabel, keptComponents: keptComponents };
   }
 
+  var invertOutput = false;
+  var invertToggle = document.getElementById('invertToggle');
+  invertToggle.addEventListener('click', function(){
+    invertOutput = !invertOutput;
+    invertToggle.classList.toggle('active', invertOutput);
+    if (confidenceCache) runDenoise();
+  });
+  function invertInPlace(imageData){
+    var d = imageData.data;
+    for (var i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; }
+    return imageData;
+  }
+
   function runDenoise(){
     if (!confidenceCache) return;
     var w = originalImageData.width, h = originalImageData.height;
@@ -553,11 +573,23 @@
     var minSize = parseInt(minSizeSlider.value,10);
     var maxExtent = parseInt(extentSlider.value,10)/100;
     var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h);
-    ctx.putImageData(r.imageData, 0, 0);
+    var displayData = invertOutput ? invertInPlace(r.imageData) : r.imageData;
+    ctx.putImageData(displayData, 0, 0);
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
       + ' as stroke-shaped (size>=' + minSize*minSize + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
-    renderChunkStrip(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
+    renderChunkStrip(displayData, w, h, r.sizes, r.bboxes, r.isKept);
+
+    var invertBlobBtn = document.getElementById('invertBlobBtn');
+    var blobTip = document.getElementById('blobTip');
+    if (r.keptComponents){
+      invertBlobBtn.style.display = 'block';
+      blobTip.style.display = 'block';
+      window.lastDenoiseResult = r; // for the invert-blob feature below
+    } else {
+      invertBlobBtn.style.display = 'none';
+      blobTip.style.display = 'none';
+    }
   }
 
   // ---- Pattern chunks: crop each surviving stroke into its own tile so you
@@ -633,40 +665,60 @@
     openCollageBtn.style.display = 'block';
   }
 
-  openCollageBtn.addEventListener('click', function(){
-    // Generate the data URLs lazily, right now, from whatever's currently kept —
-    // guarantees the collage always matches the strip you're looking at.
+  function yieldToBrowser(){ return new Promise(function(res){ setTimeout(res, 0); }); }
+
+  openCollageBtn.addEventListener('click', async function(){
+    // Generate every tile, no cap — but chunked with yields back to the
+    // browser between batches, so the page stays responsive and shows real
+    // progress instead of looking frozen while it works.
+    var total = lastKeptBoxes.length;
+    if (!total) return;
+    openCollageBtn.disabled = true;
     var lastChunkTiles = [];
-    lastKeptBoxes.forEach(function(bb){
-      var tileCanvas = makeTileCanvas(lastBinarized, lastW, lastH, bb, 4);
+    var BATCH = 15;
+    for (var i=0; i<total; i++){
+      var tileCanvas = makeTileCanvas(lastBinarized, lastW, lastH, lastKeptBoxes[i], 4);
       if (tileCanvas) lastChunkTiles.push({ dataUrl: tileCanvas.toDataURL(), w: tileCanvas.width, h: tileCanvas.height });
-    });
+      if (i % BATCH === 0){
+        openCollageBtn.textContent = '🧲 Preparing ' + (i+1) + ' / ' + total + '...';
+        await yieldToBrowser();
+      }
+    }
+    openCollageBtn.disabled = false;
+    openCollageBtn.textContent = '🧲 Open movable collage in new tab';
+
     if (!lastChunkTiles.length) return;
     var win = window.open('', '_blank');
     if (!win){ alert('Pop-up blocked — allow pop-ups for this site and try again.'); return; }
+    // Wrapping grid of starting positions (not one long unscrollable row) so
+    // every piece is reachable regardless of how many there are.
+    var perRow = 8;
+    var cellW = 100, cellH = 110;
     var pieceHtml = lastChunkTiles.map(function(tile, i){
-      var left = 20 + i * 90;
-      var top = 20 + (i % 2) * 40; // slight stagger so overlapping pieces are easier to grab
+      var col = i % perRow, row = Math.floor(i/perRow);
+      var left = 16 + col * cellW;
+      var top = 16 + row * cellH;
       return '<div class="piece" style="left:' + left + 'px; top:' + top + 'px;" data-i="' + i + '">'
         + '<img src="' + tile.dataUrl + '" draggable="false" style="height:80px;">'
         + '<button class="del">×</button>'
         + '</div>';
     }).join('');
+    var boardW = Math.max(window.innerWidth, perRow*cellW + 32);
+    var boardH = Math.max(window.innerHeight, Math.ceil(total/perRow)*cellH + 32);
     var doc = '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
       + '<title>Collage</title><style>'
-      + 'html,body{margin:0;height:100%;background:#1a1a1a;overflow:hidden;touch-action:none;}'
-      + '#board{position:relative;width:100%;height:100%;}'
+      + 'html,body{margin:0;background:#1a1a1a;touch-action:pan-x pan-y;}'
+      + '#board{position:relative;width:' + boardW + 'px;height:' + boardH + 'px;}'
       + '.piece{position:absolute;touch-action:none;cursor:grab;background:#fff;border-radius:6px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.4);}'
       + '.piece img{display:block;image-rendering:pixelated;pointer-events:none;}'
       + '.piece .del{position:absolute;top:-10px;right:-10px;width:22px;height:22px;border-radius:50%;border:none;background:#e0574a;color:#fff;font-size:14px;line-height:22px;text-align:center;cursor:pointer;padding:0;}'
       + '.piece.dragging{cursor:grabbing;z-index:1000;box-shadow:0 8px 20px rgba(0,0,0,0.5);}'
-      + '#hint{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#999;font:12px sans-serif;text-align:center;}'
+      + '#hint{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#999;font:12px sans-serif;text-align:center;z-index:1001;background:#1a1a1acc;padding:4px 10px;border-radius:6px;}'
       + '</style></head><body>'
-      + '<div id="hint">Drag pieces to arrange them. Tap × to delete a piece.</div>'
+      + '<div id="hint">' + total + ' pieces. Scroll to see them all. Drag to arrange, tap × to delete.</div>'
       + '<div id="board">' + pieceHtml + '</div>'
       + '<script>'
       + '(function(){'
-      + 'var board=document.getElementById("board");'
       + 'function bind(el){'
       + '  var drag=null, offX=0, offY=0;'
       + '  el.addEventListener("pointerdown", function(e){'
@@ -678,8 +730,8 @@
       + '  });'
       + '  el.addEventListener("pointermove", function(e){'
       + '    if (!drag) return;'
-      + '    el.style.left = (e.clientX - offX) + "px";'
-      + '    el.style.top = (e.clientY - offY) + "px";'
+      + '    el.style.left = (e.clientX - offX + window.scrollX) + "px";'
+      + '    el.style.top = (e.clientY - offY + window.scrollY) + "px";'
       + '  });'
       + '  el.addEventListener("pointerup", function(){ drag=null; el.classList.remove("dragging"); });'
       + '  el.querySelector(".del").addEventListener("click", function(){ el.remove(); });'
@@ -704,6 +756,70 @@
   extentSlider.addEventListener('input', function(){
     extentVal.textContent = extentSlider.value;
     throttledDenoise();
+  });
+
+  // ---- "Look inside the largest blob": a solid redaction mark shows up as
+  // one big, dense connected region — real text is many smaller, thinner
+  // strokes. If anything survives inside a solid redaction bar, it can only
+  // show up as a slightly lighter/whiter fleck pattern (black is already
+  // maximum, so more ink underneath can't add more black) — invisible to the
+  // normal black-on-white extraction. This crops just that one blob from the
+  // original color photo, inverts it, and re-runs the full pipeline on the
+  // inverted crop, now hunting for small light-colored "strokes" inside what
+  // was solid dark. ----
+  document.getElementById('invertBlobBtn').addEventListener('click', function(){
+    var r = window.lastDenoiseResult;
+    if (!r || !r.keptComponents) return;
+    var w = originalImageData.width, h = originalImageData.height;
+    var largest = null, largestArea = -1;
+    for (var i=0;i<r.sizes.length;i++){
+      if (!r.isKept(i)) continue;
+      var bb = r.bboxes[i];
+      var area = (bb.maxX-bb.minX+1) * (bb.maxY-bb.minY+1);
+      if (area > largestArea){ largestArea = area; largest = bb; }
+    }
+    if (!largest) return;
+
+    var pad = 8;
+    var x0 = Math.max(0, largest.minX-pad), y0 = Math.max(0, largest.minY-pad);
+    var x1 = Math.min(w, largest.maxX+pad+1), y1 = Math.min(h, largest.maxY+pad+1);
+    var cw = x1-x0, ch = y1-y0;
+
+    // Crop from the ORIGINAL color photo (not the binarized result) so the
+    // invert + re-analysis has real color data to work with.
+    var cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cw; cropCanvas.height = ch;
+    var cctx = cropCanvas.getContext('2d');
+    var cropData = cctx.createImageData(cw, ch);
+    for (var yy=0; yy<ch; yy++){
+      for (var xx=0; xx<cw; xx++){
+        var srcIdx = ((y0+yy)*w + (x0+xx)) * 4;
+        var dstIdx = (yy*cw + xx) * 4;
+        cropData.data[dstIdx]   = 255 - originalImageData.data[srcIdx];
+        cropData.data[dstIdx+1] = 255 - originalImageData.data[srcIdx+1];
+        cropData.data[dstIdx+2] = 255 - originalImageData.data[srcIdx+2];
+        cropData.data[dstIdx+3] = 255;
+      }
+    }
+
+    // Re-run the full confidence-sweep + denoise pipeline on this inverted crop.
+    var savedOriginal = originalImageData, savedConfidence = confidenceCache;
+    originalImageData = cropData;
+    var blobConfidence = computeConfidenceMap();
+    var blobResult = computeFilteredBinarized(blobConfidence, 0.4, 3, 0.65, cw, ch);
+    originalImageData = savedOriginal; confidenceCache = savedConfidence; // restore main state
+
+    var blobResultWrap = document.getElementById('blobResultWrap');
+    var blobResultCanvas = document.getElementById('blobResultCanvas');
+    var scale = Math.min(8, Math.max(1, Math.round(320/cw)));
+    blobResultCanvas.width = cw*scale; blobResultCanvas.height = ch*scale;
+    var bctx = blobResultCanvas.getContext('2d');
+    bctx.imageSmoothingEnabled = false;
+    var tmp = document.createElement('canvas');
+    tmp.width = cw; tmp.height = ch;
+    tmp.getContext('2d').putImageData(blobResult.imageData, 0, 0);
+    bctx.drawImage(tmp, 0, 0, cw, ch, 0, 0, cw*scale, ch*scale);
+    blobResultWrap.style.display = 'block';
   });
 
   // Tesseract's own layout analysis behaves worse when text runs right up to
