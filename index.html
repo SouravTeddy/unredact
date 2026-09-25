@@ -128,7 +128,7 @@
 
     <label style="display:flex; align-items:center; gap:8px; font-size:0.78rem; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; padding:4px 0;">
       <input type="checkbox" id="invertToggle" style="width:18px; height:18px;">
-      Invert (swap which side counts as "text") — use with Strictness above
+      Invert
     </label>
 
     <div class="channel-row">
@@ -503,14 +503,16 @@
   // Pure, parameterized version of the whole reveal->denoise pipeline — no DOM
   // reads, so it can be called in a loop with many different settings (used by
   // the one-tap "Find The Word" flow below), as well as by the manual sliders.
-  function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h){
+  function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h, invert){
     var softness = 0.15;
     var isBlack = new Uint8Array(w*h);
     for (var p=0;p<confidence.length;p++){
       var c = confidence[p];
       var t = (c - strictness + softness)/(2*softness);
       t = Math.max(0, Math.min(1,t));
-      isBlack[p] = (255*(1-t)) < 128 ? 1 : 0;
+      var v = 255*(1-t);
+      if (invert) v = 255 - v; // match the same swap used in the Reveal preview
+      isBlack[p] = v < 128 ? 1 : 0;
     }
     var labels = new Int32Array(w*h).fill(-1);
     var sizes = [];
@@ -565,7 +567,7 @@
     var strictness = parseInt(strictSlider.value,10)/100;
     var minSize = parseInt(minSizeSlider.value,10);
     var maxExtent = parseInt(extentSlider.value,10)/100;
-    var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h);
+    var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h, invertOutput);
     ctx.putImageData(r.imageData, 0, 0);
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
