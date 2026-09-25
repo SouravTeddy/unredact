@@ -126,9 +126,13 @@
 
     <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
 
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.78rem; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; padding:4px 0;">
+      <input type="checkbox" id="invertToggle" style="width:18px; height:18px;">
+      Invert (swap which side counts as "text") — use with Strictness above
+    </label>
+
     <div class="channel-row">
       <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
-      <div class="chip" id="invertToggle">🔄 Invert</div>
     </div>
     <div class="slider-row" id="denoiseParams" style="display:none;">
       <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
@@ -137,12 +141,6 @@
     <div class="slider-row" id="extentParams" style="display:none;">
       <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
       <input type="range" id="extentSlider" min="20" max="100" value="65">
-    </div>
-
-    <div class="tip-card" id="blobTip" style="display:none; font-size:0.78rem;">A solid redaction bar shows up as one big, dense blob — real text is many smaller strokes. If a hidden word survives at all, it's most likely a faint <i>lighter</i> speck pattern inside that one big dark blob, not more darkness. This looks inside it specifically.</div>
-    <button class="btn secondary" id="invertBlobBtn" style="display:none;">🔍 Look inside the largest blob (invert &amp; re-scan)</button>
-    <div id="blobResultWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
-      <canvas id="blobResultCanvas" style="image-rendering:pixelated;"></canvas>
     </div>
 
     <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
@@ -206,6 +204,12 @@
   var emptyState = document.getElementById('emptyState');
 
   var fullImageData = null; // the whole uploaded photo
+
+  var invertOutput = false;
+  document.getElementById('invertToggle').addEventListener('change', function(e){
+    invertOutput = e.target.checked;
+    if (confidenceCache) renderConfidence();
+  });
 
   var chips = document.querySelectorAll('.chip');
   var blackSlider = document.getElementById('blackSlider');
@@ -445,13 +449,15 @@
       var t = (c - strictness + softness) / (2*softness); // 0..1 ramp around the threshold
       t = Math.max(0, Math.min(1, t));
       var v = 255 * (1 - t); // higher confidence -> darker
+      if (invertOutput) v = 255 - v; // swap which side of the threshold reads as dark
       if (v < 128) strongCount++;
       od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
     }
     ctx.putImageData(out,0,0);
     diagBoxTop.style.display = 'block';
     diagBoxTop.textContent = 'strongly flagged: ' + (strongCount/confidenceCache.length*100).toFixed(1)
-      + '% of pixels | required confidence: ' + Math.round(strictness*100) + '% agreement across 72 threshold trials';
+      + '% of pixels | required confidence: ' + Math.round(strictness*100) + '% agreement across 72 threshold trials'
+      + (invertOutput ? ' | inverted' : '');
   }
 
   function runReveal(){
@@ -553,19 +559,6 @@
     return { imageData: out, sizes: sizes, bboxes: bboxes, isKept: isKept, nextLabel: nextLabel, keptComponents: keptComponents };
   }
 
-  var invertOutput = false;
-  var invertToggle = document.getElementById('invertToggle');
-  invertToggle.addEventListener('click', function(){
-    invertOutput = !invertOutput;
-    invertToggle.classList.toggle('active', invertOutput);
-    if (confidenceCache) runDenoise();
-  });
-  function invertInPlace(imageData){
-    var d = imageData.data;
-    for (var i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; }
-    return imageData;
-  }
-
   function runDenoise(){
     if (!confidenceCache) return;
     var w = originalImageData.width, h = originalImageData.height;
@@ -573,23 +566,11 @@
     var minSize = parseInt(minSizeSlider.value,10);
     var maxExtent = parseInt(extentSlider.value,10)/100;
     var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h);
-    var displayData = invertOutput ? invertInPlace(r.imageData) : r.imageData;
-    ctx.putImageData(displayData, 0, 0);
+    ctx.putImageData(r.imageData, 0, 0);
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
       + ' as stroke-shaped (size>=' + minSize*minSize + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
-    renderChunkStrip(displayData, w, h, r.sizes, r.bboxes, r.isKept);
-
-    var invertBlobBtn = document.getElementById('invertBlobBtn');
-    var blobTip = document.getElementById('blobTip');
-    if (r.keptComponents){
-      invertBlobBtn.style.display = 'block';
-      blobTip.style.display = 'block';
-      window.lastDenoiseResult = r; // for the invert-blob feature below
-    } else {
-      invertBlobBtn.style.display = 'none';
-      blobTip.style.display = 'none';
-    }
+    renderChunkStrip(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
   }
 
   // ---- Pattern chunks: crop each surviving stroke into its own tile so you
@@ -756,70 +737,6 @@
   extentSlider.addEventListener('input', function(){
     extentVal.textContent = extentSlider.value;
     throttledDenoise();
-  });
-
-  // ---- "Look inside the largest blob": a solid redaction mark shows up as
-  // one big, dense connected region — real text is many smaller, thinner
-  // strokes. If anything survives inside a solid redaction bar, it can only
-  // show up as a slightly lighter/whiter fleck pattern (black is already
-  // maximum, so more ink underneath can't add more black) — invisible to the
-  // normal black-on-white extraction. This crops just that one blob from the
-  // original color photo, inverts it, and re-runs the full pipeline on the
-  // inverted crop, now hunting for small light-colored "strokes" inside what
-  // was solid dark. ----
-  document.getElementById('invertBlobBtn').addEventListener('click', function(){
-    var r = window.lastDenoiseResult;
-    if (!r || !r.keptComponents) return;
-    var w = originalImageData.width, h = originalImageData.height;
-    var largest = null, largestArea = -1;
-    for (var i=0;i<r.sizes.length;i++){
-      if (!r.isKept(i)) continue;
-      var bb = r.bboxes[i];
-      var area = (bb.maxX-bb.minX+1) * (bb.maxY-bb.minY+1);
-      if (area > largestArea){ largestArea = area; largest = bb; }
-    }
-    if (!largest) return;
-
-    var pad = 8;
-    var x0 = Math.max(0, largest.minX-pad), y0 = Math.max(0, largest.minY-pad);
-    var x1 = Math.min(w, largest.maxX+pad+1), y1 = Math.min(h, largest.maxY+pad+1);
-    var cw = x1-x0, ch = y1-y0;
-
-    // Crop from the ORIGINAL color photo (not the binarized result) so the
-    // invert + re-analysis has real color data to work with.
-    var cropCanvas = document.createElement('canvas');
-    cropCanvas.width = cw; cropCanvas.height = ch;
-    var cctx = cropCanvas.getContext('2d');
-    var cropData = cctx.createImageData(cw, ch);
-    for (var yy=0; yy<ch; yy++){
-      for (var xx=0; xx<cw; xx++){
-        var srcIdx = ((y0+yy)*w + (x0+xx)) * 4;
-        var dstIdx = (yy*cw + xx) * 4;
-        cropData.data[dstIdx]   = 255 - originalImageData.data[srcIdx];
-        cropData.data[dstIdx+1] = 255 - originalImageData.data[srcIdx+1];
-        cropData.data[dstIdx+2] = 255 - originalImageData.data[srcIdx+2];
-        cropData.data[dstIdx+3] = 255;
-      }
-    }
-
-    // Re-run the full confidence-sweep + denoise pipeline on this inverted crop.
-    var savedOriginal = originalImageData, savedConfidence = confidenceCache;
-    originalImageData = cropData;
-    var blobConfidence = computeConfidenceMap();
-    var blobResult = computeFilteredBinarized(blobConfidence, 0.4, 3, 0.65, cw, ch);
-    originalImageData = savedOriginal; confidenceCache = savedConfidence; // restore main state
-
-    var blobResultWrap = document.getElementById('blobResultWrap');
-    var blobResultCanvas = document.getElementById('blobResultCanvas');
-    var scale = Math.min(8, Math.max(1, Math.round(320/cw)));
-    blobResultCanvas.width = cw*scale; blobResultCanvas.height = ch*scale;
-    var bctx = blobResultCanvas.getContext('2d');
-    bctx.imageSmoothingEnabled = false;
-    var tmp = document.createElement('canvas');
-    tmp.width = cw; tmp.height = ch;
-    tmp.getContext('2d').putImageData(blobResult.imageData, 0, 0);
-    bctx.drawImage(tmp, 0, 0, cw, ch, 0, 0, cw*scale, ch*scale);
-    blobResultWrap.style.display = 'block';
   });
 
   // Tesseract's own layout analysis behaves worse when text runs right up to
