@@ -617,7 +617,7 @@
         nextLabel++;
       }
     }
-    var minArea = minSize*minSize;
+    var minArea = minSize;
     function isKept(i){
       var bboxArea = (bboxes[i].maxX-bboxes[i].minX+1) * (bboxes[i].maxY-bboxes[i].minY+1);
       var extent = sizes[i] / bboxArea;
