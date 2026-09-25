@@ -254,25 +254,42 @@
     averageBtn.style.display = capturedFrames.length >= 2 ? 'inline-block' : 'none';
   }
 
+  // Simplified exposure fusion (Mertens-style well-exposedness weighting, single-scale).
+  // Rather than blindly averaging N shots (which just repeats the same clipping if every
+  // shot is exposed the same way), this weights each frame's contribution per-pixel by how
+  // "well exposed" that pixel is in that frame — a pixel that's blown-out white or crushed
+  // black in one shot gets near-zero weight there, letting a differently-exposed shot's
+  // good data for that same spot dominate instead. Works best when the shots you add are
+  // actually taken at different brightness/exposure, not identical repeats.
+  function wellExposedWeight(r,g,b){
+    var sigma = 0.2;
+    var wr = Math.exp(-Math.pow((r/255-0.5),2)/(2*sigma*sigma));
+    var wg = Math.exp(-Math.pow((g/255-0.5),2)/(2*sigma*sigma));
+    var wb = Math.exp(-Math.pow((b/255-0.5),2)/(2*sigma*sigma));
+    return wr*wg*wb;
+  }
+
   averageBtn.addEventListener('click', function(){
     var n = capturedFrames.length;
     var len = capturedFrames[0].data.length;
-    var avg = new Uint8ClampedArray(len);
+    var fused = new Uint8ClampedArray(len);
+    var eps = 0.01; // keeps a degenerate all-badly-exposed pixel from dividing by ~0
     for (var i=0;i<len;i+=4){
-      var sr=0, sg=0, sb=0;
+      var sr=0, sg=0, sb=0, sw=0;
       for (var f=0; f<n; f++){
-        sr += capturedFrames[f].data[i];
-        sg += capturedFrames[f].data[i+1];
-        sb += capturedFrames[f].data[i+2];
+        var d = capturedFrames[f].data;
+        var r=d[i], g=d[i+1], b=d[i+2];
+        var w = wellExposedWeight(r,g,b) + eps;
+        sr += r*w; sg += g*w; sb += b*w; sw += w;
       }
-      avg[i] = sr/n; avg[i+1] = sg/n; avg[i+2] = sb/n; avg[i+3] = 255;
+      fused[i] = sr/sw; fused[i+1] = sg/sw; fused[i+2] = sb/sw; fused[i+3] = 255;
     }
-    var averaged = new ImageData(avg, fixedW, fixedH);
+    var fusedImg = new ImageData(fused, fixedW, fixedH);
     canvas.width = fixedW; canvas.height = fixedH;
-    ctx.putImageData(averaged, 0, 0);
-    originalImageData = averaged;
-    frameCountBox.innerHTML = '<b>Averaged ' + n + ' shots.</b> Noise-reduced result below.';
-    votesCache = null;
+    ctx.putImageData(fusedImg, 0, 0);
+    originalImageData = fusedImg;
+    frameCountBox.innerHTML = '<b>Fused ' + n + ' shots</b> (weighted by how well-exposed each pixel was in each shot). Result below.';
+    confidenceCache = null;
     runReveal();
   });
 
@@ -298,7 +315,7 @@
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
-      votesCache = null;
+      confidenceCache = null;
       runReveal();
     };
     img.src = URL.createObjectURL(file);
@@ -333,25 +350,30 @@
     return ((max-min)/max) * 255;
   }
 
-  // ---- Consensus / voting engine ----
-  // Runs every channel mode independently, thresholds each against its own
-  // local neighborhood, and counts how many of the 8 channels agree a given
-  // pixel looks like ink. Real text should get flagged by most channels at
-  // once (ink absorbs broadly across colors); noise specific to one channel's
-  // math (e.g. a difference channel amplifying compression artifacts) won't
-  // agree with the others. This is a consensus vote, not a single measurement.
-  var votesCache = null;
+  // ---- Confidence-sweep engine ----
+  // Real ink should read as "darker than its surroundings" across a WIDE range
+  // of threshold choices, in multiple color channels — it's a robust, stable
+  // property of the pixel. Noise/artifacts are threshold-sensitive: nudge the
+  // cutoff slightly and they flicker in and out unpredictably. So instead of
+  // picking one threshold per channel and trusting it, this sweeps each of the
+  // 8 channels across 9 sensitivity levels (72 trials total) and records, per
+  // pixel, what FRACTION of all those trials called it "text". That fraction
+  // is a continuous confidence score, not a single fragile yes/no — exactly
+  // suited to a partial, noisy reveal rather than expecting a clean 100%.
+  var confidenceCache = null;
   var revealBtn = document.getElementById('revealBtn');
   var strictSlider = document.getElementById('strictSlider');
   var strictVal = document.getElementById('strictVal');
   var diagBoxTop = document.getElementById('diagBox');
 
-  function computeConsensusVotes(){
+  function computeConfidenceMap(){
     var w = originalImageData.width, h = originalImageData.height;
     var n = w*h;
-    var votes = new Uint8Array(n);
+    var accum = new Float64Array(n);
+    var trials = 0;
     var radius = Math.max(4, Math.round(Math.min(w,h)*0.04));
     var channelKeys = ['r','g','b','val','sat','rg','rb','gb'];
+    var sensLevels = [4,8,12,16,20,26,32,40,50];
     channelKeys.forEach(function(ch){
       var vals = extractChannel(ch);
       var min=Infinity, max=-Infinity;
@@ -360,43 +382,49 @@
       var stretched = new Float64Array(vals.length);
       for (var i2=0;i2<vals.length;i2++){ stretched[i2] = (vals[i2]-min)/range*255; }
       var localAvg = boxBlur(stretched, w, h, radius);
-      var sens = 12; // fixed, safe since stretched is always normalized to 0-255
-      for (var p=0;p<stretched.length;p++){
-        if (stretched[p] < localAvg[p]-sens) votes[p]++;
-      }
+      sensLevels.forEach(function(sens){
+        trials++;
+        for (var p=0;p<stretched.length;p++){
+          if (stretched[p] < localAvg[p]-sens) accum[p]++;
+        }
+      });
     });
-    return votes;
+    var confidence = new Float64Array(n);
+    for (var p2=0;p2<n;p2++) confidence[p2] = accum[p2]/trials; // 0..1
+    return confidence;
   }
 
-  function renderConsensus(){
-    if (!votesCache) return;
-    var strictness = parseInt(strictSlider.value,10);
-    var cutoff = 1 + Math.round(strictness/100*7); // 1..8 channels required to agree
+  function renderConfidence(){
+    if (!confidenceCache) return;
+    var strictness = parseInt(strictSlider.value,10) / 100; // 0..1
+    var softness = 0.15; // width of the gray transition zone, fixed
     var w = originalImageData.width, h = originalImageData.height;
     var out = ctx.createImageData(w,h);
     var od = out.data;
-    var textCount = 0;
-    for (var p=0, j=0; p<votesCache.length; p++, j+=4){
-      var isText = votesCache[p] >= cutoff;
-      if (isText) textCount++;
-      var v = isText ? 0 : 255;
+    var strongCount = 0;
+    for (var p=0, j=0; p<confidenceCache.length; p++, j+=4){
+      var c = confidenceCache[p];
+      var t = (c - strictness + softness) / (2*softness); // 0..1 ramp around the threshold
+      t = Math.max(0, Math.min(1, t));
+      var v = 255 * (1 - t); // higher confidence -> darker
+      if (v < 128) strongCount++;
       od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
     }
     ctx.putImageData(out,0,0);
     diagBoxTop.style.display = 'block';
-    diagBoxTop.textContent = 'flagged as text: ' + (textCount/votesCache.length*100).toFixed(1)
-      + '% of pixels | requiring at least ' + cutoff + ' of 8 channels to agree';
+    diagBoxTop.textContent = 'strongly flagged: ' + (strongCount/confidenceCache.length*100).toFixed(1)
+      + '% of pixels | required confidence: ' + Math.round(strictness*100) + '% agreement across 72 threshold trials';
   }
 
   function runReveal(){
-    votesCache = computeConsensusVotes();
-    renderConsensus();
+    confidenceCache = computeConfidenceMap();
+    renderConfidence();
   }
 
   revealBtn.addEventListener('click', runReveal);
   strictSlider.addEventListener('input', function(){
     strictVal.textContent = strictSlider.value;
-    if (votesCache) renderConsensus();
+    if (confidenceCache) renderConfidence();
   });
 
   function stdDevOf(arr){
