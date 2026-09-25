@@ -3,6 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
 <style>
   :root{
@@ -119,6 +120,19 @@
     </div>
 
     <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
+
+    <div class="channel-row">
+      <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
+    </div>
+    <div class="slider-row" id="denoiseParams" style="display:none;">
+      <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
+      <input type="range" id="minSizeSlider" min="2" max="60" value="6">
+    </div>
+
+    <div class="channel-row">
+      <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
+    </div>
+    <div class="tip-card mono" id="ocrBox" style="display:none; font-size:0.72rem;"></div>
 
     <div class="channel-row">
       <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
@@ -425,6 +439,102 @@
   strictSlider.addEventListener('input', function(){
     strictVal.textContent = strictSlider.value;
     if (confidenceCache) renderConfidence();
+  });
+
+  // ---- Connected-component denoising ("despeckle") ----
+  // Real ink strokes form coherent, connected shapes of a plausible size.
+  // Camera/JPEG noise tends to show up as small, isolated, disconnected specks.
+  // This labels every connected blob of "flagged as text" pixels, measures its
+  // size, and throws away anything too small to plausibly be a real stroke —
+  // a standard technique in document-scanner software, applied here on top of
+  // the confidence map instead of a single hard threshold.
+  var minSizeSlider = document.getElementById('minSizeSlider');
+  var minSizeVal = document.getElementById('minSizeVal');
+  var denoiseParams = document.getElementById('denoiseParams');
+  var diagBox2 = document.getElementById('diagBox');
+
+  function runDenoise(){
+    if (!confidenceCache) return;
+    var strictness = parseInt(strictSlider.value,10)/100;
+    var softness = 0.15;
+    var w = originalImageData.width, h = originalImageData.height;
+    var isBlack = new Uint8Array(w*h);
+    for (var p=0;p<confidenceCache.length;p++){
+      var c = confidenceCache[p];
+      var t = (c - strictness + softness)/(2*softness);
+      t = Math.max(0, Math.min(1,t));
+      isBlack[p] = (255*(1-t)) < 128 ? 1 : 0;
+    }
+    var labels = new Int32Array(w*h).fill(-1);
+    var sizes = [];
+    var stack = [];
+    var nextLabel = 0;
+    for (var start=0; start<w*h; start++){
+      if (isBlack[start] && labels[start]===-1){
+        stack.length = 0;
+        stack.push(start);
+        labels[start] = nextLabel;
+        var size = 0;
+        while (stack.length){
+          var idx = stack.pop();
+          size++;
+          var x = idx % w, y = (idx - x) / w;
+          if (x>0 && isBlack[idx-1] && labels[idx-1]===-1){ labels[idx-1]=nextLabel; stack.push(idx-1); }
+          if (x<w-1 && isBlack[idx+1] && labels[idx+1]===-1){ labels[idx+1]=nextLabel; stack.push(idx+1); }
+          if (y>0 && isBlack[idx-w] && labels[idx-w]===-1){ labels[idx-w]=nextLabel; stack.push(idx-w); }
+          if (y<h-1 && isBlack[idx+w] && labels[idx+w]===-1){ labels[idx+w]=nextLabel; stack.push(idx+w); }
+        }
+        sizes.push(size);
+        nextLabel++;
+      }
+    }
+    var minSize = parseInt(minSizeSlider.value,10);
+    var minArea = minSize*minSize;
+    var out = ctx.createImageData(w,h);
+    var od = out.data;
+    for (var p2=0, j=0; p2<w*h; p2++, j+=4){
+      var lbl = labels[p2];
+      var keep = lbl>=0 && sizes[lbl] >= minArea;
+      var v = keep ? 0 : 255;
+      od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
+    }
+    ctx.putImageData(out,0,0);
+    var keptComponents = sizes.filter(function(s){ return s>=minArea; }).length;
+    diagBox2.style.display = 'block';
+    diagBox2.textContent = 'found ' + nextLabel + ' connected blobs | kept ' + keptComponents
+      + ' as plausible strokes (>= ' + minArea + 'px) | removed ' + (nextLabel-keptComponents) + ' as noise specks';
+  }
+
+  document.getElementById('denoiseBtn').addEventListener('click', function(){
+    denoiseParams.style.display = 'flex';
+    runDenoise();
+  });
+  minSizeSlider.addEventListener('input', function(){
+    minSizeVal.textContent = minSizeSlider.value;
+    runDenoise();
+  });
+
+  // ---- OCR attempt via Tesseract.js ----
+  // Runs the actual open-source Tesseract OCR engine (WebAssembly build) on
+  // whatever's currently drawn on the canvas. This can only recognize genuine
+  // structure that's actually there — it won't invent words from noise — but
+  // it's a real, independent second opinion on whether what's left reads as
+  // actual characters, which is a more direct test than eyeballing pixels.
+  document.getElementById('ocrBtn').addEventListener('click', async function(){
+    var ocrBox = document.getElementById('ocrBox');
+    ocrBox.style.display = 'block';
+    ocrBox.textContent = 'Running OCR... first run downloads the language model (a few MB), can take a moment.';
+    try {
+      var dataUrl = canvas.toDataURL();
+      var result = await Tesseract.recognize(dataUrl, 'eng');
+      var text = (result.data.text || '').trim();
+      var conf = result.data.confidence;
+      ocrBox.textContent = text
+        ? ('OCR guess (confidence ' + conf.toFixed(0) + '%): "' + text + '"')
+        : ('OCR found nothing it recognized as text (confidence ' + conf.toFixed(0) + '%).');
+    } catch(e){
+      ocrBox.textContent = 'OCR failed to run: ' + e.message;
+    }
   });
 
   function stdDevOf(arr){
