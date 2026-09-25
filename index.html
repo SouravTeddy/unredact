@@ -503,6 +503,50 @@
   // Pure, parameterized version of the whole reveal->denoise pipeline — no DOM
   // reads, so it can be called in a loop with many different settings (used by
   // the one-tap "Find The Word" flow below), as well as by the manual sliders.
+  // ---- Stroke Width Transform (simplified, for an already-binary mask) ----
+  // A real pen stroke or printed character is a line of roughly CONSTANT
+  // width along its length — that's the one physical property that actually
+  // defines "this is a stroke," and it's a much stronger signal than the old
+  // fill-ratio heuristic. For every foreground pixel, this estimates local
+  // width as the shortest run of contiguous foreground pixels through it,
+  // sampled across 4 directions (horizontal, vertical, both diagonals) — the
+  // minimum approximates the width measured perpendicular to the stroke.
+  // Real strokes: small, CONSISTENT width along their length.
+  // Noise/blobs: large and/or wildly inconsistent width.
+  function computeWidthMap(isBlack, w, h){
+    var n = w*h;
+    var hRun = new Int32Array(n), vRun = new Int32Array(n), d1Run = new Int32Array(n), d2Run = new Int32Array(n);
+    function fillRuns(getIndex, lineLen, outArr){
+      var i = 0;
+      while (i < lineLen){
+        var idx = getIndex(i);
+        if (!isBlack[idx]){ i++; continue; }
+        var start = i;
+        while (i < lineLen && isBlack[getIndex(i)]) i++;
+        var len = i - start;
+        for (var k = start; k < i; k++) outArr[getIndex(k)] = len;
+      }
+    }
+    for (var y=0;y<h;y++){ (function(y){ fillRuns(function(x){ return y*w+x; }, w, hRun); })(y); }
+    for (var x=0;x<w;x++){ (function(x){ fillRuns(function(y){ return y*w+x; }, h, vRun); })(x); }
+    for (var d=-(h-1); d<w; d++){
+      var pts = [];
+      for (var y2=0;y2<h;y2++){ var x2=y2+d; if (x2>=0&&x2<w) pts.push(y2*w+x2); }
+      fillRuns(function(i){ return pts[i]; }, pts.length, d1Run);
+    }
+    for (var s=0; s<w+h-1; s++){
+      var pts2 = [];
+      for (var y3=0;y3<h;y3++){ var x3=s-y3; if (x3>=0&&x3<w) pts2.push(y3*w+x3); }
+      fillRuns(function(i){ return pts2[i]; }, pts2.length, d2Run);
+    }
+    var width = new Int32Array(n);
+    for (var p=0;p<n;p++){
+      if (!isBlack[p]) continue;
+      width[p] = Math.min(hRun[p], vRun[p], d1Run[p], d2Run[p]);
+    }
+    return width;
+  }
+
   function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h, invert){
     var softness = 0.15;
     var isBlack = new Uint8Array(w*h);
@@ -514,9 +558,11 @@
       if (invert) v = 255 - v; // match the same swap used in the Reveal preview
       isBlack[p] = v < 128 ? 1 : 0;
     }
+    var widthMap = computeWidthMap(isBlack, w, h);
     var labels = new Int32Array(w*h).fill(-1);
     var sizes = [];
     var bboxes = [];
+    var widthSum = [], widthSumSq = [];
     var stack = [];
     var nextLabel = 0;
     for (var start=0; start<w*h; start++){
@@ -524,11 +570,13 @@
         stack.length = 0;
         stack.push(start);
         labels[start] = nextLabel;
-        var size = 0;
+        var size = 0, wSum = 0, wSumSq = 0;
         var minX=w, maxX=0, minY=h, maxY=0;
         while (stack.length){
           var idx = stack.pop();
           size++;
+          var wv = widthMap[idx];
+          wSum += wv; wSumSq += wv*wv;
           var x = idx % w, y = (idx - x) / w;
           if (x<minX) minX=x; if (x>maxX) maxX=x;
           if (y<minY) minY=y; if (y>maxY) maxY=y;
@@ -539,6 +587,7 @@
         }
         sizes.push(size);
         bboxes.push({minX:minX,maxX:maxX,minY:minY,maxY:maxY});
+        widthSum.push(wSum); widthSumSq.push(wSumSq);
         nextLabel++;
       }
     }
@@ -546,7 +595,17 @@
     function isKept(i){
       var bboxArea = (bboxes[i].maxX-bboxes[i].minX+1) * (bboxes[i].maxY-bboxes[i].minY+1);
       var extent = sizes[i] / bboxArea;
-      return sizes[i] >= minArea && extent <= maxExtent;
+      if (sizes[i] < minArea || extent > maxExtent) return false;
+      // Stroke Width Transform check: real strokes are thin AND consistently
+      // wide (low coefficient of variation), and clearly longer than they are
+      // wide (elongation = area / meanWidth^2, which is large for a thin long
+      // stroke and small/near 1 for a round or blobby noise speck).
+      var meanW = widthSum[i] / sizes[i];
+      if (meanW < 0.5) return false;
+      var varW = Math.max(0, widthSumSq[i]/sizes[i] - meanW*meanW);
+      var cv = Math.sqrt(varW) / meanW;
+      var elongation = sizes[i] / (meanW*meanW);
+      return cv <= 0.7 && elongation >= 1.8;
     }
     var out = new ImageData(w,h);
     var od = out.data;
@@ -571,7 +630,7 @@
     ctx.putImageData(r.imageData, 0, 0);
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
-      + ' as stroke-shaped (size>=' + minSize*minSize + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
+      + ' as stroke-shaped (size, fill-ratio, and stroke-width-consistency all checked) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
     renderChunkStrip(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
   }
 
