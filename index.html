@@ -36,10 +36,23 @@
   main{ flex:1; display:flex; flex-direction:column; padding:16px 18px 24px; gap:16px; }
 
   #imageWrap{
-    display:none;
+    display:none; position:relative;
     border-radius:12px; background:#000; border:1px solid var(--border);
   }
   #imageWrap.active{ display:block; }
+
+  #cropOverlay{ position:absolute; inset:0; }
+  #cropBox{
+    position:absolute; border:2px solid var(--accent-2); background:rgba(224,177,85,0.08);
+    touch-action:none;
+  }
+  .handle{
+    position:absolute; width:24px; height:24px; margin:-12px;
+    background:var(--accent-2); border-radius:50%; touch-action:none;
+    border:2px solid var(--bg);
+  }
+  .handle.tl{ top:0; left:0; } .handle.tr{ top:0; left:100%; }
+  .handle.bl{ top:100%; left:0; } .handle.br{ top:100%; left:100%; }
 
   .mode-picker{ display:flex; gap:10px; }
   .mode-btn{
@@ -105,9 +118,19 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
   <div class="tip-card" id="frameCountBox" style="display:none;"></div>
 
+  <div class="tip-card" id="cropTip" style="display:none;">Drag the corners to box in just the redacted word — cropping out other text in the photo stops it from confusing the OCR/dictionary matching.</div>
   <div id="imageWrap">
     <canvas id="canvas"></canvas>
+    <div id="cropOverlay" style="display:none;">
+      <div id="cropBox">
+        <div class="handle tl"></div>
+        <div class="handle tr"></div>
+        <div class="handle bl"></div>
+        <div class="handle br"></div>
+      </div>
+    </div>
   </div>
+  <button class="btn primary" id="confirmCropBtn" style="display:none;">✂️ Crop to this area</button>
 
   <div id="stage">
     <div id="dragHint"></div>
@@ -205,6 +228,46 @@
   var stage = document.getElementById('stage');
   var imageWrap = document.getElementById('imageWrap');
   var emptyState = document.getElementById('emptyState');
+
+  // ---- Crop tool: box in just the redacted area so unrelated text elsewhere
+  // in the photo doesn't confuse OCR/dictionary matching. ----
+  var cropOverlay = document.getElementById('cropOverlay');
+  var cropBox = document.getElementById('cropBox');
+  var confirmCropBtn = document.getElementById('confirmCropBtn');
+  var cropTip = document.getElementById('cropTip');
+
+  function setCropBoxPct(l,t,r,b){
+    cropBox.style.left = l+'%'; cropBox.style.top = t+'%';
+    cropBox.style.width = (r-l)+'%'; cropBox.style.height = (b-t)+'%';
+  }
+  function boxRect(){
+    var s = cropBox.style;
+    return { l: parseFloat(s.left), t: parseFloat(s.top), w: parseFloat(s.width), h: parseFloat(s.height) };
+  }
+  var dragHandle = null, dragStart = null, boxStart = null;
+  document.querySelectorAll('.handle').forEach(function(h){
+    h.addEventListener('pointerdown', function(e){
+      dragHandle = h.className.replace('handle ','');
+      dragStart = { x:e.clientX, y:e.clientY };
+      boxStart = boxRect();
+      h.setPointerCapture(e.pointerId);
+      e.stopPropagation();
+    });
+    h.addEventListener('pointermove', function(e){
+      if (!dragHandle) return;
+      var wrapRect = imageWrap.getBoundingClientRect();
+      var dxPct = (e.clientX-dragStart.x)/wrapRect.width*100;
+      var dyPct = (e.clientY-dragStart.y)/wrapRect.height*100;
+      var l=boxStart.l, t=boxStart.t, r=boxStart.l+boxStart.w, b=boxStart.t+boxStart.h;
+      if (dragHandle.indexOf('l')>=0) l = Math.min(r-5, boxStart.l+dxPct);
+      if (dragHandle.indexOf('r')>=0) r = Math.max(l+5, boxStart.l+boxStart.w+dxPct);
+      if (dragHandle.indexOf('t')>=0) t = Math.min(b-5, boxStart.t+dyPct);
+      if (dragHandle.indexOf('b')>=0) b = Math.max(t+5, boxStart.t+boxStart.h+dyPct);
+      l=Math.max(0,l); t=Math.max(0,t); r=Math.min(100,r); b=Math.min(100,b);
+      setCropBoxPct(l,t,r,b);
+    });
+    h.addEventListener('pointerup', function(){ dragHandle = null; });
+  });
   var chips = document.querySelectorAll('.chip');
   var blackSlider = document.getElementById('blackSlider');
   var whiteSlider = document.getElementById('whiteSlider');
@@ -340,18 +403,36 @@
       }
       canvas.width = fixedW; canvas.height = fixedH;
       ctx.drawImage(img, 0, 0, fixedW, fixedH);
-      var frameData = ctx.getImageData(0,0,fixedW,fixedH);
-      capturedFrames.push(frameData);
-      originalImageData = frameData;
-      updateFrameCountUI();
-      stage.classList.add('active');
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
-      confidenceCache = null;
-      runReveal();
+      stage.classList.remove('active');
+      cropOverlay.style.display = 'block';
+      confirmCropBtn.style.display = 'block';
+      cropTip.style.display = 'block';
+      setCropBoxPct(5,5,95,95);
     };
     img.src = URL.createObjectURL(file);
+  });
+
+  confirmCropBtn.addEventListener('click', function(){
+    var box = boxRect();
+    var sx = Math.round(box.l/100*canvas.width), sy = Math.round(box.t/100*canvas.height);
+    var sw = Math.max(4, Math.round(box.w/100*canvas.width));
+    var sh = Math.max(4, Math.round(box.h/100*canvas.height));
+    var cropped = ctx.getImageData(sx, sy, sw, sh);
+    canvas.width = sw; canvas.height = sh;
+    ctx.putImageData(cropped, 0, 0);
+    fixedW = sw; fixedH = sh;
+    capturedFrames.push(cropped);
+    originalImageData = cropped;
+    updateFrameCountUI();
+    cropOverlay.style.display = 'none';
+    confirmCropBtn.style.display = 'none';
+    cropTip.style.display = 'none';
+    stage.classList.add('active');
+    confidenceCache = null;
+    runReveal();
   });
 
   // extract a single grayscale-ish value per pixel for the requested channel/diff mode
@@ -722,6 +803,8 @@
     return d[m][n];
   }
 
+  var dictionaryRank = null; // word -> index in frequency-ordered list (lower = more common)
+
   function nearestDictionaryWord(token){
     if (!dictionary || !dictionary.length) return null;
     var best = null, bestDist = Infinity;
@@ -735,20 +818,37 @@
     return best ? { word: best, dist: bestDist } : null;
   }
 
-  // ---- One-tap "Find The Word": tries several reveal/denoise settings
-  // automatically, OCRs each, and keeps only the results that match real
-  // English words — surfacing just the best couple of guesses instead of
-  // every knob in the pipeline. ----
+  // ---- One-tap "Find The Word": sweeps many reveal/denoise settings, OCRs
+  // each with several Tesseract workers running in parallel (so more settings
+  // doesn't mean proportionally longer wait), tuned for short cropped
+  // snippets via PSM (page segmentation mode), and keeps only results that
+  // match real English words — weighted toward more common words, since a
+  // frequent word is a more likely real match than an obscure one at the
+  // same edit distance. ----
   var findWordBtn = document.getElementById('findWordBtn');
   var suggestionsBox = document.getElementById('suggestionsBox');
 
-  var searchConfigs = [
-    { strict:0.30, minSize:4, maxExtent:0.50 },
-    { strict:0.40, minSize:5, maxExtent:0.55 },
-    { strict:0.50, minSize:6, maxExtent:0.60 },
-    { strict:0.60, minSize:8, maxExtent:0.65 },
-    { strict:0.35, minSize:4, maxExtent:0.75 }
-  ];
+  var searchConfigs = [];
+  [0.25,0.32,0.40,0.48,0.56,0.65].forEach(function(strict){
+    [4,6,9].forEach(function(minSize){
+      searchConfigs.push({ strict:strict, minSize:minSize, maxExtent: strict<0.45 ? 0.55 : 0.7 });
+    });
+  });
+  // 18 configs total, run across a small pool of parallel OCR workers.
+
+  var NUM_WORKERS = 4;
+  async function makeOcrScheduler(){
+    var scheduler = Tesseract.createScheduler();
+    for (var i=0;i<NUM_WORKERS;i++){
+      var worker = await Tesseract.createWorker('eng');
+      // PSM 7 = treat the image as a single line of text. Our crops are short
+      // snippets, not full pages, so this avoids Tesseract wasting effort on
+      // layout/paragraph detection that doesn't apply here.
+      await worker.setParameters({ tessedit_pageseg_mode: '7' });
+      scheduler.addWorker(worker);
+    }
+    return scheduler;
+  }
 
   findWordBtn.addEventListener('click', async function(){
     if (!originalImageData){
@@ -758,22 +858,36 @@
     }
     findWordBtn.disabled = true;
     suggestionsBox.style.display = 'block';
-    suggestionsBox.textContent = 'Analyzing... this tries several settings automatically and can take 20-30 seconds.';
+    suggestionsBox.textContent = 'Analyzing... running ' + searchConfigs.length + ' settings across ' + NUM_WORKERS + ' parallel OCR workers, ~15-30 seconds.';
 
     await dictionaryLoading;
+    if (!dictionaryRank){
+      dictionaryRank = {};
+      dictionary.forEach(function(w,i){ dictionaryRank[w] = i; });
+    }
     var w = originalImageData.width, h = originalImageData.height;
     if (!confidenceCache) confidenceCache = computeConfidenceMap();
 
-    var candidates = [];
-    for (var ci=0; ci<searchConfigs.length; ci++){
-      findWordBtn.textContent = '🔍 Trying setting ' + (ci+1) + ' of ' + searchConfigs.length + '...';
-      var cfg = searchConfigs[ci];
+    // Precompute every candidate image up front (fast, synchronous) so the
+    // slow part (OCR) can be dispatched to the parallel worker pool at once.
+    var dataUrls = [];
+    searchConfigs.forEach(function(cfg){
       var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
-      if (!r.keptComponents) continue;
-      ctx.putImageData(r.imageData, 0, 0);
-      var dataUrl = canvas.toDataURL();
-      try {
-        var result = await Tesseract.recognize(dataUrl, 'eng');
+      if (!r.keptComponents) return;
+      var tmpCanvas = document.createElement('canvas');
+      tmpCanvas.width = w; tmpCanvas.height = h;
+      tmpCanvas.getContext('2d').putImageData(r.imageData, 0, 0);
+      dataUrls.push(tmpCanvas.toDataURL());
+    });
+
+    var scheduler = await makeOcrScheduler();
+    var candidates = [];
+    try {
+      var results = await Promise.all(dataUrls.map(function(url){
+        return scheduler.addJob('recognize', url).catch(function(){ return null; });
+      }));
+      results.forEach(function(result){
+        if (!result) return;
         var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z]{2,}$/.test(t); });
         tokens.forEach(function(tok){
           var match = nearestDictionaryWord(tok.toLowerCase());
@@ -782,7 +896,9 @@
             candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
           }
         });
-      } catch(e){ /* skip this config on failure, keep trying the others */ }
+      });
+    } finally {
+      await scheduler.terminate();
     }
 
     findWordBtn.disabled = false;
@@ -790,7 +906,9 @@
 
     var byWord = {};
     candidates.forEach(function(c){
-      var score = c.conf - c.dist*15;
+      var freqRank = dictionaryRank[c.word] || 5000;
+      var freqBonus = Math.max(0, 10 - freqRank/500); // more common word -> small score boost
+      var score = c.conf - c.dist*15 + freqBonus;
       if (!byWord[c.word] || byWord[c.word] < score) byWord[c.word] = score;
     });
     var ranked = Object.keys(byWord).map(function(w2){ return {word:w2, score:byWord[w2]}; })
@@ -798,7 +916,7 @@
 
     if (ranked.length){
       suggestionsBox.innerHTML = '<b>These might be your word:</b><br>' + ranked.map(function(r){ return r.word; }).join(', ')
-        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common English words — open "See how it works" below to inspect the raw reveal yourself.</span>';
+        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common English words, weighted by frequency — open "See how it works" below to inspect the raw reveal yourself.</span>';
     } else {
       suggestionsBox.innerHTML = 'No confident word match found. The underlying signal may be too weak or the redaction may be genuinely opaque.'
         + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Open "See how it works" below to inspect manually and try a repeat-photo test.</span>';
