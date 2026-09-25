@@ -828,27 +828,21 @@
   var findWordBtn = document.getElementById('findWordBtn');
   var suggestionsBox = document.getElementById('suggestionsBox');
 
-  var searchConfigs = [];
-  [0.25,0.32,0.40,0.48,0.56,0.65].forEach(function(strict){
-    [4,6,9].forEach(function(minSize){
-      searchConfigs.push({ strict:strict, minSize:minSize, maxExtent: strict<0.45 ? 0.55 : 0.7 });
-    });
-  });
-  // 18 configs total, run across a small pool of parallel OCR workers.
-
-  var NUM_WORKERS = 4;
-  async function makeOcrScheduler(){
-    var scheduler = Tesseract.createScheduler();
-    for (var i=0;i<NUM_WORKERS;i++){
-      var worker = await Tesseract.createWorker('eng');
-      // PSM 7 = treat the image as a single line of text. Our crops are short
-      // snippets, not full pages, so this avoids Tesseract wasting effort on
-      // layout/paragraph detection that doesn't apply here.
-      await worker.setParameters({ tessedit_pageseg_mode: '7' });
-      scheduler.addWorker(worker);
-    }
-    return scheduler;
-  }
+  // Back to the plain Tesseract.recognize() call — this is the version you
+  // already confirmed actually works. The parallel-worker/PSM-override
+  // version made things worse, most likely because it was silently failing
+  // on most configs rather than genuinely running more of them.
+  var searchConfigs = [
+    { strict:0.28, minSize:4, maxExtent:0.50 },
+    { strict:0.35, minSize:5, maxExtent:0.55 },
+    { strict:0.42, minSize:6, maxExtent:0.60 },
+    { strict:0.50, minSize:6, maxExtent:0.60 },
+    { strict:0.58, minSize:8, maxExtent:0.65 },
+    { strict:0.65, minSize:9, maxExtent:0.70 },
+    { strict:0.32, minSize:4, maxExtent:0.75 },
+    { strict:0.45, minSize:5, maxExtent:0.75 },
+    { strict:0.55, minSize:7, maxExtent:0.75 }
+  ];
 
   findWordBtn.addEventListener('click', async function(){
     if (!originalImageData){
@@ -858,7 +852,7 @@
     }
     findWordBtn.disabled = true;
     suggestionsBox.style.display = 'block';
-    suggestionsBox.textContent = 'Analyzing... running ' + searchConfigs.length + ' settings across ' + NUM_WORKERS + ' parallel OCR workers, ~15-30 seconds.';
+    suggestionsBox.textContent = 'Analyzing... trying ' + searchConfigs.length + ' settings, ~20-40 seconds.';
 
     await dictionaryLoading;
     if (!dictionaryRank){
@@ -868,26 +862,16 @@
     var w = originalImageData.width, h = originalImageData.height;
     if (!confidenceCache) confidenceCache = computeConfidenceMap();
 
-    // Precompute every candidate image up front (fast, synchronous) so the
-    // slow part (OCR) can be dispatched to the parallel worker pool at once.
-    var dataUrls = [];
-    searchConfigs.forEach(function(cfg){
-      var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
-      if (!r.keptComponents) return;
-      var tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = w; tmpCanvas.height = h;
-      tmpCanvas.getContext('2d').putImageData(r.imageData, 0, 0);
-      dataUrls.push(tmpCanvas.toDataURL());
-    });
-
-    var scheduler = await makeOcrScheduler();
     var candidates = [];
-    try {
-      var results = await Promise.all(dataUrls.map(function(url){
-        return scheduler.addJob('recognize', url).catch(function(){ return null; });
-      }));
-      results.forEach(function(result){
-        if (!result) return;
+    for (var ci=0; ci<searchConfigs.length; ci++){
+      findWordBtn.textContent = '🔍 Trying setting ' + (ci+1) + ' of ' + searchConfigs.length + '...';
+      var cfg = searchConfigs[ci];
+      var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
+      if (!r.keptComponents) continue;
+      ctx.putImageData(r.imageData, 0, 0);
+      var dataUrl = canvas.toDataURL();
+      try {
+        var result = await Tesseract.recognize(dataUrl, 'eng');
         var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z]{2,}$/.test(t); });
         tokens.forEach(function(tok){
           var match = nearestDictionaryWord(tok.toLowerCase());
@@ -896,9 +880,7 @@
             candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
           }
         });
-      });
-    } finally {
-      await scheduler.terminate();
+      } catch(e){ /* skip this config on failure, keep trying the others */ }
     }
 
     findWordBtn.disabled = false;
