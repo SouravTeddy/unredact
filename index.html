@@ -125,40 +125,52 @@
   <div id="stage">
     <div id="dragHint"></div>
 
+    <button class="btn primary" id="revealBtn" style="width:100%;">🔎 Reveal Text (auto)</button>
+
+    <div class="slider-row">
+      <label>Strictness <span class="val mono" id="strictVal">50</span></label>
+      <input type="range" id="strictSlider" min="0" max="100" value="50">
+    </div>
+
+    <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
+
     <div class="channel-row">
       <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
       <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
     </div>
 
-    <div class="channel-row" id="channelRow">
-      <div class="chip active" data-ch="auto">AUTO ✦</div>
-      <div class="chip" data-ch="r">RED</div>
-      <div class="chip" data-ch="g">GREEN</div>
-      <div class="chip" data-ch="b">BLUE</div>
-      <div class="chip" data-ch="rg">R−G</div>
-      <div class="chip" data-ch="rb">R−B</div>
-      <div class="chip" data-ch="gb">G−B</div>
-      <div class="chip" data-ch="sat">SAT</div>
-      <div class="chip" data-ch="val">VAL</div>
-    </div>
+    <details id="advancedDetails">
+      <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">⚙️ Advanced manual controls</summary>
 
-    <div class="slider-row">
-      <label>Black point <span class="val mono" id="blackVal">0</span></label>
-      <input type="range" id="blackSlider" min="0" max="255" value="0">
-    </div>
-    <div class="slider-row">
-      <label>White point <span class="val mono" id="whiteVal">255</span></label>
-      <input type="range" id="whiteSlider" min="0" max="255" value="255">
-    </div>
+      <div class="channel-row" id="channelRow" style="margin-top:8px;">
+        <div class="chip active" data-ch="auto">AUTO ✦</div>
+        <div class="chip" data-ch="r">RED</div>
+        <div class="chip" data-ch="g">GREEN</div>
+        <div class="chip" data-ch="b">BLUE</div>
+        <div class="chip" data-ch="rg">R−G</div>
+        <div class="chip" data-ch="rb">R−B</div>
+        <div class="chip" data-ch="gb">G−B</div>
+        <div class="chip" data-ch="sat">SAT</div>
+        <div class="chip" data-ch="val">VAL</div>
+      </div>
 
-    <div class="channel-row">
-      <div class="chip" id="binarizeToggle" style="flex:1;">🔲 Sharpen text (adaptive threshold)</div>
-    </div>
-    <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
-    <div class="slider-row" id="binarizeParams" style="display:none;">
-      <label>Sensitivity <span class="val mono" id="sensVal">6</span></label>
-      <input type="range" id="sensSlider" min="1" max="60" value="6">
-    </div>
+      <div class="slider-row">
+        <label>Black point <span class="val mono" id="blackVal">0</span></label>
+        <input type="range" id="blackSlider" min="0" max="255" value="0">
+      </div>
+      <div class="slider-row">
+        <label>White point <span class="val mono" id="whiteVal">255</span></label>
+        <input type="range" id="whiteSlider" min="0" max="255" value="255">
+      </div>
+
+      <div class="channel-row">
+        <div class="chip" id="binarizeToggle" style="flex:1;">🔲 Sharpen text (adaptive threshold)</div>
+      </div>
+      <div class="slider-row" id="binarizeParams" style="display:none;">
+        <label>Sensitivity <span class="val mono" id="sensVal">6</span></label>
+        <input type="range" id="sensSlider" min="1" max="60" value="6">
+      </div>
+    </details>
 
     <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
   </div>
@@ -273,8 +285,9 @@
     canvas.width = fixedW; canvas.height = fixedH;
     ctx.putImageData(averaged, 0, 0);
     originalImageData = averaged;
-    frameCountBox.innerHTML = '<b>Averaged ' + n + ' shots.</b> Now pick a channel below to analyze the noise-reduced result.';
-    pickBestChannelAndCompute();
+    frameCountBox.innerHTML = '<b>Averaged ' + n + ' shots.</b> Noise-reduced result below.';
+    votesCache = null;
+    runReveal();
   });
 
   fileInput.addEventListener('change', function(e){
@@ -299,7 +312,8 @@
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
-      pickBestChannelAndCompute();
+      votesCache = null;
+      runReveal();
     };
     img.src = URL.createObjectURL(file);
   });
@@ -332,6 +346,72 @@
     if (max === 0) return 0;
     return ((max-min)/max) * 255;
   }
+
+  // ---- Consensus / voting engine ----
+  // Runs every channel mode independently, thresholds each against its own
+  // local neighborhood, and counts how many of the 8 channels agree a given
+  // pixel looks like ink. Real text should get flagged by most channels at
+  // once (ink absorbs broadly across colors); noise specific to one channel's
+  // math (e.g. a difference channel amplifying compression artifacts) won't
+  // agree with the others. This is a consensus vote, not a single measurement.
+  var votesCache = null;
+  var revealBtn = document.getElementById('revealBtn');
+  var strictSlider = document.getElementById('strictSlider');
+  var strictVal = document.getElementById('strictVal');
+  var diagBoxTop = document.getElementById('diagBox');
+
+  function computeConsensusVotes(){
+    var w = originalImageData.width, h = originalImageData.height;
+    var n = w*h;
+    var votes = new Uint8Array(n);
+    var radius = Math.max(4, Math.round(Math.min(w,h)*0.04));
+    var channelKeys = ['r','g','b','val','sat','rg','rb','gb'];
+    channelKeys.forEach(function(ch){
+      var vals = extractChannel(ch);
+      var min=Infinity, max=-Infinity;
+      for (var i=0;i<vals.length;i++){ if(vals[i]<min)min=vals[i]; if(vals[i]>max)max=vals[i]; }
+      var range = Math.max(1, max-min);
+      var stretched = new Float64Array(vals.length);
+      for (var i2=0;i2<vals.length;i2++){ stretched[i2] = (vals[i2]-min)/range*255; }
+      var localAvg = boxBlur(stretched, w, h, radius);
+      var sens = 12; // fixed, safe since stretched is always normalized to 0-255
+      for (var p=0;p<stretched.length;p++){
+        if (stretched[p] < localAvg[p]-sens) votes[p]++;
+      }
+    });
+    return votes;
+  }
+
+  function renderConsensus(){
+    if (!votesCache) return;
+    var strictness = parseInt(strictSlider.value,10);
+    var cutoff = 1 + Math.round(strictness/100*7); // 1..8 channels required to agree
+    var w = originalImageData.width, h = originalImageData.height;
+    var out = ctx.createImageData(w,h);
+    var od = out.data;
+    var textCount = 0;
+    for (var p=0, j=0; p<votesCache.length; p++, j+=4){
+      var isText = votesCache[p] >= cutoff;
+      if (isText) textCount++;
+      var v = isText ? 0 : 255;
+      od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
+    }
+    ctx.putImageData(out,0,0);
+    diagBoxTop.style.display = 'block';
+    diagBoxTop.textContent = 'flagged as text: ' + (textCount/votesCache.length*100).toFixed(1)
+      + '% of pixels | requiring at least ' + cutoff + ' of 8 channels to agree';
+  }
+
+  function runReveal(){
+    votesCache = computeConsensusVotes();
+    renderConsensus();
+  }
+
+  revealBtn.addEventListener('click', runReveal);
+  strictSlider.addEventListener('input', function(){
+    strictVal.textContent = strictSlider.value;
+    if (votesCache) renderConsensus();
+  });
 
   function stdDevOf(arr){
     var n=arr.length, sum=0, sumSq=0;
