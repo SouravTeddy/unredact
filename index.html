@@ -485,7 +485,12 @@
     var n = w*h;
     var accum = new Float64Array(n);
     var trials = 0;
-    var radius = Math.max(4, Math.round(Math.min(w,h)*0.04));
+    // Fixed pixel radius, not scaled to image size — cropping selects a
+    // sub-region at the same resolution, it doesn't change how many pixels
+    // wide an actual stroke is, so this shouldn't shrink just because you
+    // cropped tighter. 14px is a reasonable middle ground for handwriting
+    // stroke width at typical phone-camera resolution.
+    var radius = 14;
     var channelKeys = ['r','g','b','val','sat','rg','rb','gb'];
     var sensLevels = [4,8,12,16,20,26,32,40,50];
     channelKeys.forEach(function(ch){
@@ -753,6 +758,21 @@
     runDenoise();
   });
 
+  // Tesseract's own layout analysis behaves worse when text runs right up to
+  // the image edge with zero margin — much more likely once you're feeding it
+  // a tightly cropped snippet instead of a whole page. Padding a plain white
+  // border around whatever's on the canvas before OCR is a cheap, real fix.
+  function withWhiteMargin(srcCanvas, margin){
+    var padded = document.createElement('canvas');
+    padded.width = srcCanvas.width + margin*2;
+    padded.height = srcCanvas.height + margin*2;
+    var pctx = padded.getContext('2d');
+    pctx.fillStyle = '#fff';
+    pctx.fillRect(0,0,padded.width,padded.height);
+    pctx.drawImage(srcCanvas, margin, margin);
+    return padded.toDataURL();
+  }
+
   // ---- OCR attempt via Tesseract.js ----
   // Runs the actual open-source Tesseract OCR engine (WebAssembly build) on
   // whatever's currently drawn on the canvas. This can only recognize genuine
@@ -764,7 +784,7 @@
     ocrBox.style.display = 'block';
     ocrBox.textContent = 'Running OCR... first run downloads the language model (a few MB), can take a moment.';
     try {
-      var dataUrl = canvas.toDataURL();
+      var dataUrl = withWhiteMargin(canvas, 24);
       var result = await Tesseract.recognize(dataUrl, 'eng');
       var text = (result.data.text || '').trim();
       var conf = result.data.confidence;
@@ -832,16 +852,20 @@
   // already confirmed actually works. The parallel-worker/PSM-override
   // version made things worse, most likely because it was silently failing
   // on most configs rather than genuinely running more of them.
+  // Ordered loosest -> strictest so watching it run actually looks like it's
+  // converging (cleaner each step), not zigzagging back and forth. Doesn't
+  // change the final result (all 9 are still tried and scored at the end
+  // regardless of order) but makes the process legible instead of confusing.
   var searchConfigs = [
-    { strict:0.28, minSize:4, maxExtent:0.50 },
-    { strict:0.35, minSize:5, maxExtent:0.55 },
-    { strict:0.42, minSize:6, maxExtent:0.60 },
-    { strict:0.50, minSize:6, maxExtent:0.60 },
-    { strict:0.58, minSize:8, maxExtent:0.65 },
-    { strict:0.65, minSize:9, maxExtent:0.70 },
-    { strict:0.32, minSize:4, maxExtent:0.75 },
-    { strict:0.45, minSize:5, maxExtent:0.75 },
-    { strict:0.55, minSize:7, maxExtent:0.75 }
+    { strict:0.28, minSize:4, maxExtent:0.75 },
+    { strict:0.32, minSize:4, maxExtent:0.72 },
+    { strict:0.35, minSize:5, maxExtent:0.70 },
+    { strict:0.40, minSize:5, maxExtent:0.68 },
+    { strict:0.45, minSize:6, maxExtent:0.65 },
+    { strict:0.50, minSize:6, maxExtent:0.62 },
+    { strict:0.55, minSize:7, maxExtent:0.60 },
+    { strict:0.60, minSize:8, maxExtent:0.55 },
+    { strict:0.65, minSize:9, maxExtent:0.50 }
   ];
 
   findWordBtn.addEventListener('click', async function(){
@@ -869,7 +893,7 @@
       var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
       if (!r.keptComponents) continue;
       ctx.putImageData(r.imageData, 0, 0);
-      var dataUrl = canvas.toDataURL();
+      var dataUrl = withWhiteMargin(canvas, 24);
       try {
         var result = await Tesseract.recognize(dataUrl, 'eng');
         var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z]{2,}$/.test(t); });
@@ -956,7 +980,12 @@
     var od = out.data;
 
     if (binarizeOn){
-      var radius = Math.max(4, Math.round(Math.min(w,h)*0.04));
+      // Fixed pixel radius, not scaled to image size — cropping selects a
+    // sub-region at the same resolution, it doesn't change how many pixels
+    // wide an actual stroke is, so this shouldn't shrink just because you
+    // cropped tighter. 14px is a reasonable middle ground for handwriting
+    // stroke width at typical phone-camera resolution.
+    var radius = 14;
       var localAvg = boxBlur(stretched, w, h, radius);
       var sensitivity = parseInt(sensSlider.value,10);
       var textCount = 0;
