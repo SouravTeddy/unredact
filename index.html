@@ -100,17 +100,7 @@
   .empty{ color:var(--ink-faint); font-size:0.85rem; text-align:center; padding:40px 20px; }
 </style>
 
-<header>
-  <div class="eyebrow">Prototype · v1 · highlighter mode only</div>
-  <h1>Unredact</h1>
-  <div class="sub">Reveal text hidden under a translucent highlighter by isolating the color channel with the best contrast. Backlight mode coming once this is confirmed working.</div>
-</header>
-
 <main>
-  <div class="tip-card" id="tip">
-    <b>How to shoot it:</b> lay the highlighted page flat under normal room light, hold the phone directly above it, and take one photo — no special lighting needed.
-  </div>
-
   <div class="capture-row">
     <button class="btn primary" id="captureBtn">📷 Take Photo</button>
     <button class="btn secondary" id="uploadBtn">Upload</button>
@@ -118,7 +108,6 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
   <div class="tip-card" id="frameCountBox" style="display:none;"></div>
 
-  <div class="tip-card" id="cropTip" style="display:none;">Take a close, tight photo of just the redacted word or line for the best result — the whole photo gets analyzed as one.</div>
   <div id="imageWrap">
     <canvas id="canvas"></canvas>
   </div>
@@ -126,55 +115,45 @@
   <div id="stage">
     <div id="dragHint"></div>
 
-    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word</button>
-    <div class="tip-card" id="suggestionsBox" style="display:none;"></div>
-
     <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
 
-    <details id="powerDetails">
-      <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">⚙️ See how it works / manual controls</summary>
+    <button class="btn primary" id="revealBtn" style="width:100%; margin-top:8px;">🔎 Reveal Text (auto)</button>
 
-      <button class="btn primary" id="revealBtn" style="width:100%; margin-top:8px;">🔎 Reveal Text (auto)</button>
+    <div class="slider-row">
+      <label>Strictness <span class="val mono" id="strictVal">50</span></label>
+      <input type="range" id="strictSlider" min="0" max="100" value="50">
+    </div>
 
-      <div class="slider-row">
-        <label>Strictness <span class="val mono" id="strictVal">50</span></label>
-        <input type="range" id="strictSlider" min="0" max="100" value="50">
-      </div>
+    <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
 
-      <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
+    <div class="channel-row">
+      <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
+    </div>
+    <div class="slider-row" id="denoiseParams" style="display:none;">
+      <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
+      <input type="range" id="minSizeSlider" min="2" max="60" value="6">
+    </div>
+    <div class="slider-row" id="extentParams" style="display:none;">
+      <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
+      <input type="range" id="extentSlider" min="20" max="100" value="65">
+    </div>
 
-      <div class="channel-row">
-        <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
-      </div>
-      <div class="slider-row" id="denoiseParams" style="display:none;">
-        <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
-        <input type="range" id="minSizeSlider" min="2" max="60" value="6">
-      </div>
-      <div class="slider-row" id="extentParams" style="display:none;">
-        <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
-        <input type="range" id="extentSlider" min="20" max="100" value="65">
-      </div>
+    <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
+    <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
+    <button class="btn primary" id="openCollageBtn" style="display:none;">🧲 Open movable collage in new tab</button>
 
-      <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
-      <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
+    <div class="channel-row">
+      <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
+    </div>
+    <div class="tip-card mono" id="ocrBox" style="display:none; font-size:0.72rem;"></div>
 
-      <div id="collageLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase; margin-top:6px;">Reassembled at true relative positions</div>
-      <div id="collageWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
-        <canvas id="collageCanvas" style="image-rendering:pixelated;"></canvas>
-      </div>
+    <div class="channel-row">
+      <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
+      <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
+    </div>
 
-      <div class="channel-row">
-        <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
-      </div>
-      <div class="tip-card mono" id="ocrBox" style="display:none; font-size:0.72rem;"></div>
-
-      <div class="channel-row">
-        <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
-        <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
-      </div>
-
-      <details id="advancedDetails">
-        <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">Manual channel/levels controls</summary>
+    <details id="advancedDetails">
+      <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">Manual channel/levels controls</summary>
 
         <div class="channel-row" id="channelRow" style="margin-top:8px;">
           <div class="chip active" data-ch="auto">AUTO ✦</div>
@@ -205,7 +184,6 @@
           <input type="range" id="sensSlider" min="1" max="60" value="6">
         </div>
       </details>
-    </details>
   </div>
 
   <div class="empty" id="emptyState">No photo yet — take or upload one to see the result here.</div>
@@ -220,7 +198,6 @@
   var imageWrap = document.getElementById('imageWrap');
   var emptyState = document.getElementById('emptyState');
 
-  var cropTip = document.getElementById('cropTip');
   var fullImageData = null; // the whole uploaded photo
 
   var chips = document.querySelectorAll('.chip');
@@ -365,7 +342,6 @@
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
-      cropTip.style.display = 'block';
       stage.classList.add('active');
     };
     img.src = URL.createObjectURL(file);
@@ -568,17 +544,22 @@
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
       + ' as stroke-shaped (size>=' + minSize*minSize + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
     renderChunkStrip(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
-    renderCollage(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
   }
 
-  // ---- "Collage" strip: crop each surviving pattern into its own tile,
-  // ordered left-to-right, so you can visually try to assemble them into
-  // letters/words yourself without surrounding noise in the way. ----
+  // ---- Pattern chunks: crop each surviving stroke into its own tile so you
+  // can inspect them without surrounding noise. Also stashes each tile as a
+  // data URL for the interactive collage (opened in a new tab), where you can
+  // drag pieces next to each other or delete ones that are clearly noise —
+  // since a human eye piecing shapes together has repeatedly done better here
+  // than any automated matching. ----
   var chunkStrip = document.getElementById('chunkStrip');
   var chunkStripLabel = document.getElementById('chunkStripLabel');
+  var openCollageBtn = document.getElementById('openCollageBtn');
+  var lastChunkTiles = []; // [{dataUrl, w, h}], left-to-right
 
   function renderChunkStrip(binarizedImageData, w, h, sizes, bboxes, isKept){
     chunkStrip.innerHTML = '';
+    lastChunkTiles = [];
     var kept = [];
     for (var i=0;i<sizes.length;i++){
       if (isKept(i)) kept.push(bboxes[i]);
@@ -586,6 +567,7 @@
     if (!kept.length){
       chunkStrip.style.display = 'none';
       chunkStripLabel.style.display = 'none';
+      openCollageBtn.style.display = 'none';
       return;
     }
     kept.sort(function(a,b){ return a.minX - b.minX; });
@@ -618,67 +600,63 @@
       tileCanvas.style.background = '#fff';
       tileCanvas.style.flex = '0 0 auto';
       chunkStrip.appendChild(tileCanvas);
+      lastChunkTiles.push({ dataUrl: tileCanvas.toDataURL(), w: cw, h: ch });
     });
     chunkStrip.style.display = 'flex';
     chunkStripLabel.style.display = 'block';
+    openCollageBtn.style.display = 'block';
   }
 
-  // ---- True-position reassembly: place every surviving stroke back at its
-  // actual relative (x,y) on a canvas cropped to just the region that
-  // contains them. Unlike the left-to-right strip, this preserves real
-  // spatial relationships — the actual test of whether the pieces form a
-  // recognizable letter/word shape together, not just individually. ----
-  var collageWrap = document.getElementById('collageWrap');
-  var collageLabel = document.getElementById('collageLabel');
-  var collageCanvas = document.getElementById('collageCanvas');
-
-  function renderCollage(binarizedImageData, w, h, sizes, bboxes, isKept){
-    var keptBoxes = [];
-    for (var i=0;i<sizes.length;i++) if (isKept(i)) keptBoxes.push(bboxes[i]);
-    if (!keptBoxes.length){
-      collageWrap.style.display = 'none';
-      collageLabel.style.display = 'none';
-      return;
-    }
-    var pad = 6;
-    var unionMinX = Math.min.apply(null, keptBoxes.map(function(b){return b.minX;})) - pad;
-    var unionMaxX = Math.max.apply(null, keptBoxes.map(function(b){return b.maxX;})) + pad;
-    var unionMinY = Math.min.apply(null, keptBoxes.map(function(b){return b.minY;})) - pad;
-    var unionMaxY = Math.max.apply(null, keptBoxes.map(function(b){return b.maxY;})) + pad;
-    unionMinX = Math.max(0, unionMinX); unionMinY = Math.max(0, unionMinY);
-    unionMaxX = Math.min(w-1, unionMaxX); unionMaxY = Math.min(h-1, unionMaxY);
-    var cw = unionMaxX - unionMinX + 1, ch = unionMaxY - unionMinY + 1;
-
-    var scale = Math.min(6, Math.max(1, Math.round(300/cw))); // upscale small crops for visibility
-    collageCanvas.width = cw * scale;
-    collageCanvas.height = ch * scale;
-    var cctx = collageCanvas.getContext('2d');
-    cctx.imageSmoothingEnabled = false;
-    cctx.fillStyle = '#fff';
-    cctx.fillRect(0,0,collageCanvas.width,collageCanvas.height);
-
-    // draw the crop at native res first, then it'll be visually scaled by canvas size above —
-    // instead, build a native-res offscreen buffer and drawImage it scaled up for crisp pixels.
-    var tmp = document.createElement('canvas');
-    tmp.width = cw; tmp.height = ch;
-    var tctx = tmp.getContext('2d');
-    var tileData = tctx.createImageData(cw, ch);
-    for (var yy=0; yy<ch; yy++){
-      for (var xx=0; xx<cw; xx++){
-        var srcIdx = ((unionMinY+yy)*w + (unionMinX+xx)) * 4;
-        var dstIdx = (yy*cw + xx) * 4;
-        tileData.data[dstIdx] = binarizedImageData.data[srcIdx];
-        tileData.data[dstIdx+1] = binarizedImageData.data[srcIdx+1];
-        tileData.data[dstIdx+2] = binarizedImageData.data[srcIdx+2];
-        tileData.data[dstIdx+3] = 255;
-      }
-    }
-    tctx.putImageData(tileData, 0, 0);
-    cctx.drawImage(tmp, 0, 0, cw, ch, 0, 0, cw*scale, ch*scale);
-
-    collageWrap.style.display = 'block';
-    collageLabel.style.display = 'block';
-  }
+  openCollageBtn.addEventListener('click', function(){
+    if (!lastChunkTiles.length) return;
+    var win = window.open('', '_blank');
+    if (!win){ alert('Pop-up blocked — allow pop-ups for this site and try again.'); return; }
+    var pieceHtml = lastChunkTiles.map(function(tile, i){
+      var left = 20 + i * 90;
+      var top = 20 + (i % 2) * 40; // slight stagger so overlapping pieces are easier to grab
+      return '<div class="piece" style="left:' + left + 'px; top:' + top + 'px;" data-i="' + i + '">'
+        + '<img src="' + tile.dataUrl + '" draggable="false" style="height:80px;">'
+        + '<button class="del">×</button>'
+        + '</div>';
+    }).join('');
+    var doc = '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<title>Collage</title><style>'
+      + 'html,body{margin:0;height:100%;background:#1a1a1a;overflow:hidden;touch-action:none;}'
+      + '#board{position:relative;width:100%;height:100%;}'
+      + '.piece{position:absolute;touch-action:none;cursor:grab;background:#fff;border-radius:6px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,0.4);}'
+      + '.piece img{display:block;image-rendering:pixelated;pointer-events:none;}'
+      + '.piece .del{position:absolute;top:-10px;right:-10px;width:22px;height:22px;border-radius:50%;border:none;background:#e0574a;color:#fff;font-size:14px;line-height:22px;text-align:center;cursor:pointer;padding:0;}'
+      + '.piece.dragging{cursor:grabbing;z-index:1000;box-shadow:0 8px 20px rgba(0,0,0,0.5);}'
+      + '#hint{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#999;font:12px sans-serif;text-align:center;}'
+      + '</style></head><body>'
+      + '<div id="hint">Drag pieces to arrange them. Tap × to delete a piece.</div>'
+      + '<div id="board">' + pieceHtml + '</div>'
+      + '<script>'
+      + '(function(){'
+      + 'var board=document.getElementById("board");'
+      + 'function bind(el){'
+      + '  var drag=null, offX=0, offY=0;'
+      + '  el.addEventListener("pointerdown", function(e){'
+      + '    if (e.target.classList.contains("del")) return;'
+      + '    drag = el; el.classList.add("dragging");'
+      + '    var r = el.getBoundingClientRect();'
+      + '    offX = e.clientX - r.left; offY = e.clientY - r.top;'
+      + '    el.setPointerCapture(e.pointerId);'
+      + '  });'
+      + '  el.addEventListener("pointermove", function(e){'
+      + '    if (!drag) return;'
+      + '    el.style.left = (e.clientX - offX) + "px";'
+      + '    el.style.top = (e.clientY - offY) + "px";'
+      + '  });'
+      + '  el.addEventListener("pointerup", function(){ drag=null; el.classList.remove("dragging"); });'
+      + '  el.querySelector(".del").addEventListener("click", function(){ el.remove(); });'
+      + '}'
+      + 'Array.prototype.forEach.call(document.querySelectorAll(".piece"), bind);'
+      + '})();'
+      + '<\/script></body></html>';
+    win.document.write(doc);
+    win.document.close();
+  });
 
   document.getElementById('denoiseBtn').addEventListener('click', function(){
     denoiseParams.style.display = 'flex';
@@ -730,200 +708,6 @@
     } catch(e){
       ocrBox.textContent = 'OCR failed to run: ' + e.message;
     }
-  });
-
-  // ---- Dictionary correction: turns raw OCR gibberish into real-word guesses ----
-  // OCR on a damaged/noisy image often gets individual letters half-right —
-  // close in shape to the real letter but not exact. Rather than showing that
-  // raw garbage, this matches each OCR token against a list of ~10,000 common
-  // English words using edit distance (Levenshtein), and only surfaces a
-  // candidate if it's actually close to a real word — otherwise it's discarded
-  // as noise, not guessed at.
-  var dictionary = null;
-  var dictionaryLoading = fetch('https://cdn.jsdelivr.net/gh/first20hours/google-10000-english@master/google-10000-english-no-swears.txt')
-    .then(function(r){ return r.text(); })
-    .then(function(txt){ dictionary = txt.split('\n').map(function(w){ return w.trim().toLowerCase(); }).filter(Boolean); })
-    .catch(function(){ dictionary = []; });
-
-  function levenshtein(a, b){
-    var m = a.length, n = b.length;
-    var d = [];
-    for (var i=0;i<=m;i++) d.push([i]);
-    for (var j=0;j<=n;j++) d[0][j] = j;
-    for (var i2=1;i2<=m;i2++){
-      for (var j2=1;j2<=n;j2++){
-        var cost = a[i2-1] === b[j2-1] ? 0 : 1;
-        d[i2][j2] = Math.min(d[i2-1][j2]+1, d[i2][j2-1]+1, d[i2-1][j2-1]+cost);
-      }
-    }
-    return d[m][n];
-  }
-
-  var dictionaryRank = null; // word -> index in frequency-ordered list (lower = more common)
-
-  function nearestDictionaryWord(token){
-    if (!dictionary || !dictionary.length) return null;
-    var best = null, bestDist = Infinity;
-    for (var i=0;i<dictionary.length;i++){
-      var w = dictionary[i];
-      if (Math.abs(w.length - token.length) > 3) continue; // quick skip, saves time
-      var dist = levenshtein(token, w);
-      if (dist < bestDist){ bestDist = dist; best = w; }
-      if (bestDist === 0) break;
-    }
-    return best ? { word: best, dist: bestDist } : null;
-  }
-
-  // ---- One-tap "Find The Word": sweeps many reveal/denoise settings, OCRs
-  // each with several Tesseract workers running in parallel (so more settings
-  // doesn't mean proportionally longer wait), tuned for short cropped
-  // snippets via PSM (page segmentation mode), and keeps only results that
-  // match real English words — weighted toward more common words, since a
-  // frequent word is a more likely real match than an obscure one at the
-  // same edit distance. ----
-  var findWordBtn = document.getElementById('findWordBtn');
-  var suggestionsBox = document.getElementById('suggestionsBox');
-
-  // Back to the plain Tesseract.recognize() call — this is the version you
-  // already confirmed actually works. The parallel-worker/PSM-override
-  // version made things worse, most likely because it was silently failing
-  // on most configs rather than genuinely running more of them.
-  // Ordered loosest -> strictest so watching it run actually looks like it's
-  // converging (cleaner each step), not zigzagging back and forth. Doesn't
-  // change the final result (all 9 are still tried and scored at the end
-  // regardless of order) but makes the process legible instead of confusing.
-  var searchConfigs = [
-    { strict:0.28, minSize:4, maxExtent:0.75 },
-    { strict:0.32, minSize:4, maxExtent:0.72 },
-    { strict:0.35, minSize:5, maxExtent:0.70 },
-    { strict:0.40, minSize:5, maxExtent:0.68 },
-    { strict:0.45, minSize:6, maxExtent:0.65 },
-    { strict:0.50, minSize:6, maxExtent:0.62 },
-    { strict:0.55, minSize:7, maxExtent:0.60 },
-    { strict:0.60, minSize:8, maxExtent:0.55 },
-    { strict:0.65, minSize:9, maxExtent:0.50 }
-  ];
-
-  // Runs a single plain (non-scheduler) worker with an optional character
-  // whitelist — a small, low-risk change unlike the earlier scheduler+PSM
-  // attempt, since whitelisting only restricts possible outputs rather than
-  // changing how Tesseract segments the image. Used to try "this is probably
-  // a number" and "this is probably a word" as separate, targeted guesses.
-  async function recognizeWithWhitelist(dataUrl, whitelist){
-    var worker = await Tesseract.createWorker('eng');
-    try {
-      if (whitelist) await worker.setParameters({ tessedit_char_whitelist: whitelist });
-      return await worker.recognize(dataUrl);
-    } finally {
-      await worker.terminate();
-    }
-  }
-
-  findWordBtn.addEventListener('click', async function(){
-    if (!fullImageData){
-      suggestionsBox.style.display = 'block';
-      suggestionsBox.textContent = 'Take or upload a photo first.';
-      return;
-    }
-    findWordBtn.disabled = true;
-    suggestionsBox.style.display = 'block';
-
-    await dictionaryLoading;
-    if (!dictionaryRank){
-      dictionaryRank = {};
-      dictionary.forEach(function(w,i){ dictionaryRank[w] = i; });
-    }
-
-    var regions = [{ sx:0, sy:0, sw:fullImageData.width, sh:fullImageData.height }];
-
-    var regionResults = [];
-    for (var ri=0; ri<regions.length; ri++){
-      var reg = regions[ri];
-      var tmpFull = document.createElement('canvas');
-      tmpFull.width = fullImageData.width; tmpFull.height = fullImageData.height;
-      tmpFull.getContext('2d').putImageData(fullImageData, 0, 0);
-      var regionData = tmpFull.getContext('2d').getImageData(reg.sx, reg.sy, reg.sw, reg.sh);
-
-      originalImageData = regionData; // so manual "See how it works" tools reflect the last region too
-      canvas.width = reg.sw; canvas.height = reg.sh;
-      ctx.putImageData(regionData, 0, 0);
-      confidenceCache = computeConfidenceMap();
-
-      var w = reg.sw, h = reg.sh;
-      var candidates = [];
-      for (var ci=0; ci<searchConfigs.length; ci++){
-        findWordBtn.textContent = '🔍 Region ' + (ri+1) + '/' + regions.length + ', setting ' + (ci+1) + '/' + searchConfigs.length + '...';
-        var cfg = searchConfigs[ci];
-        var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
-        if (!r.keptComponents) continue;
-        ctx.putImageData(r.imageData, 0, 0);
-        var dataUrl = withWhiteMargin(canvas, 24);
-        try {
-          var result = await Tesseract.recognize(dataUrl, 'eng');
-          var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z0-9]{1,}$/.test(t); });
-          tokens.forEach(function(tok){
-            if (/^[0-9]+$/.test(tok)){
-              candidates.push({ word: tok, dist: 0, conf: result.data.confidence, isNumber: true });
-              return;
-            }
-            if (tok.length < 2) return;
-            var match = nearestDictionaryWord(tok.toLowerCase());
-            var tolerance = Math.max(1, Math.ceil(tok.length*0.4));
-            if (match && match.dist <= tolerance){
-              candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
-            }
-          });
-        } catch(e){ /* skip this config on failure, keep trying the others */ }
-      }
-
-      // Targeted whitelist passes on the clearest single rendering (the config
-      // that kept the most stroke-shaped components) — one assuming it's a
-      // number, one assuming it's a word, since knowing the field type narrows
-      // the search space a lot more than a generic alphanumeric pass does.
-      var bestCfg = searchConfigs.reduce(function(best, cfg){
-        var rr = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
-        return (!best || rr.keptComponents > best.kept) ? { cfg:cfg, kept:rr.keptComponents, imageData:rr.imageData } : best;
-      }, null);
-      if (bestCfg && bestCfg.kept){
-        ctx.putImageData(bestCfg.imageData, 0, 0);
-        var bestDataUrl = withWhiteMargin(canvas, 24);
-        try {
-          var numResult = await recognizeWithWhitelist(bestDataUrl, '0123456789.,');
-          var numText = (numResult.data.text || '').replace(/[^0-9.,]/g,'').trim();
-          if (numText) candidates.push({ word: numText, dist: 0, conf: numResult.data.confidence, isNumber: true });
-        } catch(e){}
-        try {
-          var alphaResult = await recognizeWithWhitelist(bestDataUrl, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz');
-          var alphaTok = (alphaResult.data.text || '').trim().split(/\s+/)[0] || '';
-          if (alphaTok.length >= 2){
-            var am = nearestDictionaryWord(alphaTok.toLowerCase());
-            var atol = Math.max(1, Math.ceil(alphaTok.length*0.4));
-            if (am && am.dist <= atol) candidates.push({ word: am.word, dist: am.dist, conf: alphaResult.data.confidence });
-          }
-        } catch(e){}
-      }
-
-      var byWord = {};
-      candidates.forEach(function(c){
-        var freqRank = c.isNumber ? 0 : (dictionaryRank[c.word] || 5000);
-        var freqBonus = c.isNumber ? 5 : Math.max(0, 10 - freqRank/500);
-        var score = c.conf - c.dist*15 + freqBonus;
-        if (!byWord[c.word] || byWord[c.word] < score) byWord[c.word] = score;
-      });
-      var ranked = Object.keys(byWord).map(function(w2){ return {word:w2, score:byWord[w2]}; })
-        .sort(function(a,b){ return b.score-a.score; }).slice(0,3);
-      regionResults.push({ index: ri+1, ranked: ranked });
-    }
-
-    findWordBtn.disabled = false;
-    findWordBtn.textContent = '🔍 Find The Word(s)';
-
-    var html = regionResults.map(function(rr){
-      var label = regions.length > 1 ? ('<b>Region ' + rr.index + ':</b> ') : '<b>These might be your word:</b> ';
-      return label + (rr.ranked.length ? rr.ranked.map(function(r){ return r.word; }).join(', ') : 'no confident match found');
-    }).join('<br>');
-    suggestionsBox.innerHTML = html
-      + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common words and, separately, tried as a plain number — open "See how it works" below to inspect the raw reveal yourself.</span>';
   });
 
   function stdDevOf(arr){
@@ -1048,7 +832,6 @@
     confidenceCache = null;
     suggestionsBox.style.display = 'none';
     fullImageData = null;
-    cropTip.style.display = 'none';
     stage.classList.remove('active');
     imageWrap.classList.remove('active');
     document.querySelector('main').classList.remove('photo-active');
