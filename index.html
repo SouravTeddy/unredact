@@ -118,29 +118,15 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
   <div class="tip-card" id="frameCountBox" style="display:none;"></div>
 
-  <div class="tip-card" id="cropTip" style="display:none;">Drag the corners to box in one redacted word, tap "Mark this region", then repeat for every other redacted spot on the page — each gets analyzed separately.</div>
+  <div class="tip-card" id="cropTip" style="display:none;">Take a close, tight photo of just the redacted word or line for the best result — the whole photo gets analyzed as one.</div>
   <div id="imageWrap">
     <canvas id="canvas"></canvas>
-    <canvas id="markerCanvas" style="position:absolute; inset:0; pointer-events:none;"></canvas>
-    <div id="cropOverlay" style="display:none;">
-      <div id="cropBox">
-        <div class="handle tl"></div>
-        <div class="handle tr"></div>
-        <div class="handle bl"></div>
-        <div class="handle br"></div>
-      </div>
-    </div>
   </div>
-  <div class="channel-row" id="regionButtonsRow" style="display:none;">
-    <button class="btn secondary" id="markRegionBtn" style="flex:1;">➕ Mark this region</button>
-    <button class="btn secondary" id="undoRegionBtn">↩️ Undo last</button>
-  </div>
-  <div class="tip-card" id="regionCountBox" style="display:none;"></div>
 
   <div id="stage">
     <div id="dragHint"></div>
 
-    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word(s)</button>
+    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word</button>
     <div class="tip-card" id="suggestionsBox" style="display:none;"></div>
 
     <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
@@ -234,72 +220,9 @@
   var imageWrap = document.getElementById('imageWrap');
   var emptyState = document.getElementById('emptyState');
 
-  // ---- Multi-region marking: box in each redacted spot separately (non-
-  // destructively — the full photo stays intact) so a document with several
-  // redactions gets each one analyzed on its own, and unrelated text
-  // elsewhere never confuses OCR/dictionary matching for a given spot. ----
-  var cropOverlay = document.getElementById('cropOverlay');
-  var cropBox = document.getElementById('cropBox');
   var cropTip = document.getElementById('cropTip');
-  var markerCanvas = document.getElementById('markerCanvas');
-  var mctx = markerCanvas.getContext('2d');
-  var regionButtonsRow = document.getElementById('regionButtonsRow');
-  var regionCountBox = document.getElementById('regionCountBox');
-  var fullImageData = null; // the whole uploaded photo, never destructively modified
-  var markedRegions = []; // [{sx,sy,sw,sh}] in pixel coords of the full photo
+  var fullImageData = null; // the whole uploaded photo
 
-  function redrawMarkers(){
-    mctx.clearRect(0,0,markerCanvas.width,markerCanvas.height);
-    mctx.strokeStyle = '#e0b155';
-    mctx.lineWidth = 2;
-    mctx.font = 'bold 14px sans-serif';
-    mctx.fillStyle = '#e0b155';
-    markedRegions.forEach(function(r, i){
-      mctx.strokeRect(r.sx, r.sy, r.sw, r.sh);
-      mctx.fillText(String(i+1), r.sx+4, r.sy+16);
-    });
-  }
-  function updateRegionCountUI(){
-    if (markedRegions.length){
-      regionCountBox.style.display = 'block';
-      regionCountBox.textContent = markedRegions.length + ' region(s) marked. Mark more, or tap "Find The Word(s)" below to analyze them.';
-    } else {
-      regionCountBox.style.display = 'none';
-    }
-  }
-
-  function setCropBoxPct(l,t,r,b){
-    cropBox.style.left = l+'%'; cropBox.style.top = t+'%';
-    cropBox.style.width = (r-l)+'%'; cropBox.style.height = (b-t)+'%';
-  }
-  function boxRect(){
-    var s = cropBox.style;
-    return { l: parseFloat(s.left), t: parseFloat(s.top), w: parseFloat(s.width), h: parseFloat(s.height) };
-  }
-  var dragHandle = null, dragStart = null, boxStart = null;
-  document.querySelectorAll('.handle').forEach(function(h){
-    h.addEventListener('pointerdown', function(e){
-      dragHandle = h.className.replace('handle ','');
-      dragStart = { x:e.clientX, y:e.clientY };
-      boxStart = boxRect();
-      h.setPointerCapture(e.pointerId);
-      e.stopPropagation();
-    });
-    h.addEventListener('pointermove', function(e){
-      if (!dragHandle) return;
-      var wrapRect = imageWrap.getBoundingClientRect();
-      var dxPct = (e.clientX-dragStart.x)/wrapRect.width*100;
-      var dyPct = (e.clientY-dragStart.y)/wrapRect.height*100;
-      var l=boxStart.l, t=boxStart.t, r=boxStart.l+boxStart.w, b=boxStart.t+boxStart.h;
-      if (dragHandle.indexOf('l')>=0) l = Math.min(r-5, boxStart.l+dxPct);
-      if (dragHandle.indexOf('r')>=0) r = Math.max(l+5, boxStart.l+boxStart.w+dxPct);
-      if (dragHandle.indexOf('t')>=0) t = Math.min(b-5, boxStart.t+dyPct);
-      if (dragHandle.indexOf('b')>=0) b = Math.max(t+5, boxStart.t+boxStart.h+dyPct);
-      l=Math.max(0,l); t=Math.max(0,t); r=Math.min(100,r); b=Math.min(100,b);
-      setCropBoxPct(l,t,r,b);
-    });
-    h.addEventListener('pointerup', function(){ dragHandle = null; });
-  });
   var chips = document.querySelectorAll('.chip');
   var blackSlider = document.getElementById('blackSlider');
   var whiteSlider = document.getElementById('whiteSlider');
@@ -434,41 +357,18 @@
         capturedFrames = [];
       }
       canvas.width = fixedW; canvas.height = fixedH;
-      markerCanvas.width = fixedW; markerCanvas.height = fixedH;
       ctx.drawImage(img, 0, 0, fixedW, fixedH);
       fullImageData = ctx.getImageData(0,0,fixedW,fixedH);
+      originalImageData = fullImageData;
       if (!capturedFrames.length) capturedFrames.push(fullImageData);
-      markedRegions = [];
-      redrawMarkers();
+      confidenceCache = null;
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
-      stage.classList.remove('active');
-      cropOverlay.style.display = 'block';
-      regionButtonsRow.style.display = 'flex';
       cropTip.style.display = 'block';
-      setCropBoxPct(5,5,95,95);
-      updateRegionCountUI();
+      stage.classList.add('active');
     };
     img.src = URL.createObjectURL(file);
-  });
-
-  document.getElementById('markRegionBtn').addEventListener('click', function(){
-    var box = boxRect();
-    var sx = Math.round(box.l/100*canvas.width), sy = Math.round(box.t/100*canvas.height);
-    var sw = Math.max(4, Math.round(box.w/100*canvas.width));
-    var sh = Math.max(4, Math.round(box.h/100*canvas.height));
-    markedRegions.push({sx:sx, sy:sy, sw:sw, sh:sh});
-    redrawMarkers();
-    updateRegionCountUI();
-    stage.classList.add('active');
-    // shift the draggable box a little so the next region is easy to start fresh
-    setCropBoxPct(5,5,45,35);
-  });
-  document.getElementById('undoRegionBtn').addEventListener('click', function(){
-    markedRegions.pop();
-    redrawMarkers();
-    updateRegionCountUI();
   });
 
   // extract a single grayscale-ish value per pixel for the requested channel/diff mode
@@ -934,9 +834,7 @@
       dictionary.forEach(function(w,i){ dictionaryRank[w] = i; });
     }
 
-    var regions = markedRegions.length
-      ? markedRegions.map(function(r){ return { sx:r.sx, sy:r.sy, sw:r.sw, sh:r.sh }; })
-      : [{ sx:0, sy:0, sw:fullImageData.width, sh:fullImageData.height }];
+    var regions = [{ sx:0, sy:0, sw:fullImageData.width, sh:fullImageData.height }];
 
     var regionResults = [];
     for (var ri=0; ri<regions.length; ri++){
@@ -1150,11 +1048,6 @@
     confidenceCache = null;
     suggestionsBox.style.display = 'none';
     fullImageData = null;
-    markedRegions = [];
-    mctx.clearRect(0,0,markerCanvas.width,markerCanvas.height);
-    regionButtonsRow.style.display = 'none';
-    regionCountBox.style.display = 'none';
-    cropOverlay.style.display = 'none';
     cropTip.style.display = 'none';
     stage.classList.remove('active');
     imageWrap.classList.remove('active');
