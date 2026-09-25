@@ -142,6 +142,14 @@
       <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
       <input type="range" id="extentSlider" min="20" max="100" value="65">
     </div>
+    <div class="slider-row" id="cvParams" style="display:none;">
+      <label>Max width variation (higher = more lenient) <span class="val mono" id="cvVal">150</span>%</label>
+      <input type="range" id="cvSlider" min="20" max="300" value="150">
+    </div>
+    <div class="slider-row" id="elongParams" style="display:none;">
+      <label>Min elongation (higher = stricter, rejects round shapes) <span class="val mono" id="elongVal">1.05</span></label>
+      <input type="range" id="elongSlider" min="100" max="500" value="105">
+    </div>
 
     <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
     <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
@@ -498,6 +506,12 @@
   var extentSlider = document.getElementById('extentSlider');
   var extentVal = document.getElementById('extentVal');
   var extentParams = document.getElementById('extentParams');
+  var cvSlider = document.getElementById('cvSlider');
+  var cvVal = document.getElementById('cvVal');
+  var cvParams = document.getElementById('cvParams');
+  var elongSlider = document.getElementById('elongSlider');
+  var elongVal = document.getElementById('elongVal');
+  var elongParams = document.getElementById('elongParams');
   var diagBox2 = document.getElementById('diagBox');
 
   // Pure, parameterized version of the whole reveal->denoise pipeline — no DOM
@@ -547,7 +561,9 @@
     return width;
   }
 
-  function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h, invert){
+  function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h, invert, maxCV, minElongation){
+    if (maxCV === undefined) maxCV = 1.5;
+    if (minElongation === undefined) minElongation = 1.05;
     var softness = 0.15;
     var isBlack = new Uint8Array(w*h);
     for (var p=0;p<confidence.length;p++){
@@ -605,7 +621,7 @@
       var varW = Math.max(0, widthSumSq[i]/sizes[i] - meanW*meanW);
       var cv = Math.sqrt(varW) / meanW;
       var elongation = sizes[i] / (meanW*meanW);
-      return cv <= 0.7 && elongation >= 1.8;
+      return cv <= maxCV && elongation >= minElongation;
     }
     var out = new ImageData(w,h);
     var od = out.data;
@@ -626,7 +642,9 @@
     var strictness = parseInt(strictSlider.value,10)/100;
     var minSize = parseInt(minSizeSlider.value,10);
     var maxExtent = parseInt(extentSlider.value,10)/100;
-    var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h, invertOutput);
+    var maxCV = parseInt(cvSlider.value,10)/100;
+    var minElongation = parseInt(elongSlider.value,10)/100;
+    var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h, invertOutput, maxCV, minElongation);
     ctx.putImageData(r.imageData, 0, 0);
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
@@ -788,6 +806,8 @@
   document.getElementById('denoiseBtn').addEventListener('click', function(){
     denoiseParams.style.display = 'flex';
     extentParams.style.display = 'flex';
+    cvParams.style.display = 'flex';
+    elongParams.style.display = 'flex';
     runDenoise();
   });
   var throttledDenoise = rafThrottle(runDenoise);
@@ -797,6 +817,14 @@
   });
   extentSlider.addEventListener('input', function(){
     extentVal.textContent = extentSlider.value;
+    throttledDenoise();
+  });
+  cvSlider.addEventListener('input', function(){
+    cvVal.textContent = cvSlider.value;
+    throttledDenoise();
+  });
+  elongSlider.addEventListener('input', function(){
+    elongVal.textContent = (parseInt(elongSlider.value,10)/100).toFixed(2);
     throttledDenoise();
   });
 
