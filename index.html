@@ -118,9 +118,10 @@
   <input type="file" id="fileInput" accept="image/*" capture="environment">
   <div class="tip-card" id="frameCountBox" style="display:none;"></div>
 
-  <div class="tip-card" id="cropTip" style="display:none;">Drag the corners to box in just the redacted word — cropping out other text in the photo stops it from confusing the OCR/dictionary matching.</div>
+  <div class="tip-card" id="cropTip" style="display:none;">Drag the corners to box in one redacted word, tap "Mark this region", then repeat for every other redacted spot on the page — each gets analyzed separately.</div>
   <div id="imageWrap">
     <canvas id="canvas"></canvas>
+    <canvas id="markerCanvas" style="position:absolute; inset:0; pointer-events:none;"></canvas>
     <div id="cropOverlay" style="display:none;">
       <div id="cropBox">
         <div class="handle tl"></div>
@@ -130,12 +131,16 @@
       </div>
     </div>
   </div>
-  <button class="btn primary" id="confirmCropBtn" style="display:none;">✂️ Crop to this area</button>
+  <div class="channel-row" id="regionButtonsRow" style="display:none;">
+    <button class="btn secondary" id="markRegionBtn" style="flex:1;">➕ Mark this region</button>
+    <button class="btn secondary" id="undoRegionBtn">↩️ Undo last</button>
+  </div>
+  <div class="tip-card" id="regionCountBox" style="display:none;"></div>
 
   <div id="stage">
     <div id="dragHint"></div>
 
-    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word</button>
+    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word(s)</button>
     <div class="tip-card" id="suggestionsBox" style="display:none;"></div>
 
     <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
@@ -229,12 +234,39 @@
   var imageWrap = document.getElementById('imageWrap');
   var emptyState = document.getElementById('emptyState');
 
-  // ---- Crop tool: box in just the redacted area so unrelated text elsewhere
-  // in the photo doesn't confuse OCR/dictionary matching. ----
+  // ---- Multi-region marking: box in each redacted spot separately (non-
+  // destructively — the full photo stays intact) so a document with several
+  // redactions gets each one analyzed on its own, and unrelated text
+  // elsewhere never confuses OCR/dictionary matching for a given spot. ----
   var cropOverlay = document.getElementById('cropOverlay');
   var cropBox = document.getElementById('cropBox');
-  var confirmCropBtn = document.getElementById('confirmCropBtn');
   var cropTip = document.getElementById('cropTip');
+  var markerCanvas = document.getElementById('markerCanvas');
+  var mctx = markerCanvas.getContext('2d');
+  var regionButtonsRow = document.getElementById('regionButtonsRow');
+  var regionCountBox = document.getElementById('regionCountBox');
+  var fullImageData = null; // the whole uploaded photo, never destructively modified
+  var markedRegions = []; // [{sx,sy,sw,sh}] in pixel coords of the full photo
+
+  function redrawMarkers(){
+    mctx.clearRect(0,0,markerCanvas.width,markerCanvas.height);
+    mctx.strokeStyle = '#e0b155';
+    mctx.lineWidth = 2;
+    mctx.font = 'bold 14px sans-serif';
+    mctx.fillStyle = '#e0b155';
+    markedRegions.forEach(function(r, i){
+      mctx.strokeRect(r.sx, r.sy, r.sw, r.sh);
+      mctx.fillText(String(i+1), r.sx+4, r.sy+16);
+    });
+  }
+  function updateRegionCountUI(){
+    if (markedRegions.length){
+      regionCountBox.style.display = 'block';
+      regionCountBox.textContent = markedRegions.length + ' region(s) marked. Mark more, or tap "Find The Word(s)" below to analyze them.';
+    } else {
+      regionCountBox.style.display = 'none';
+    }
+  }
 
   function setCropBoxPct(l,t,r,b){
     cropBox.style.left = l+'%'; cropBox.style.top = t+'%';
@@ -402,37 +434,41 @@
         capturedFrames = [];
       }
       canvas.width = fixedW; canvas.height = fixedH;
+      markerCanvas.width = fixedW; markerCanvas.height = fixedH;
       ctx.drawImage(img, 0, 0, fixedW, fixedH);
+      fullImageData = ctx.getImageData(0,0,fixedW,fixedH);
+      if (!capturedFrames.length) capturedFrames.push(fullImageData);
+      markedRegions = [];
+      redrawMarkers();
       imageWrap.classList.add('active');
       document.querySelector('main').classList.add('photo-active');
       emptyState.style.display = 'none';
       stage.classList.remove('active');
       cropOverlay.style.display = 'block';
-      confirmCropBtn.style.display = 'block';
+      regionButtonsRow.style.display = 'flex';
       cropTip.style.display = 'block';
       setCropBoxPct(5,5,95,95);
+      updateRegionCountUI();
     };
     img.src = URL.createObjectURL(file);
   });
 
-  confirmCropBtn.addEventListener('click', function(){
+  document.getElementById('markRegionBtn').addEventListener('click', function(){
     var box = boxRect();
     var sx = Math.round(box.l/100*canvas.width), sy = Math.round(box.t/100*canvas.height);
     var sw = Math.max(4, Math.round(box.w/100*canvas.width));
     var sh = Math.max(4, Math.round(box.h/100*canvas.height));
-    var cropped = ctx.getImageData(sx, sy, sw, sh);
-    canvas.width = sw; canvas.height = sh;
-    ctx.putImageData(cropped, 0, 0);
-    fixedW = sw; fixedH = sh;
-    capturedFrames.push(cropped);
-    originalImageData = cropped;
-    updateFrameCountUI();
-    cropOverlay.style.display = 'none';
-    confirmCropBtn.style.display = 'none';
-    cropTip.style.display = 'none';
+    markedRegions.push({sx:sx, sy:sy, sw:sw, sh:sh});
+    redrawMarkers();
+    updateRegionCountUI();
     stage.classList.add('active');
-    confidenceCache = null;
-    runReveal();
+    // shift the draggable box a little so the next region is easy to start fresh
+    setCropBoxPct(5,5,45,35);
+  });
+  document.getElementById('undoRegionBtn').addEventListener('click', function(){
+    markedRegions.pop();
+    redrawMarkers();
+    updateRegionCountUI();
   });
 
   // extract a single grayscale-ish value per pixel for the requested channel/diff mode
@@ -868,65 +904,128 @@
     { strict:0.65, minSize:9, maxExtent:0.50 }
   ];
 
+  // Runs a single plain (non-scheduler) worker with an optional character
+  // whitelist — a small, low-risk change unlike the earlier scheduler+PSM
+  // attempt, since whitelisting only restricts possible outputs rather than
+  // changing how Tesseract segments the image. Used to try "this is probably
+  // a number" and "this is probably a word" as separate, targeted guesses.
+  async function recognizeWithWhitelist(dataUrl, whitelist){
+    var worker = await Tesseract.createWorker('eng');
+    try {
+      if (whitelist) await worker.setParameters({ tessedit_char_whitelist: whitelist });
+      return await worker.recognize(dataUrl);
+    } finally {
+      await worker.terminate();
+    }
+  }
+
   findWordBtn.addEventListener('click', async function(){
-    if (!originalImageData){
+    if (!fullImageData){
       suggestionsBox.style.display = 'block';
       suggestionsBox.textContent = 'Take or upload a photo first.';
       return;
     }
     findWordBtn.disabled = true;
     suggestionsBox.style.display = 'block';
-    suggestionsBox.textContent = 'Analyzing... trying ' + searchConfigs.length + ' settings, ~20-40 seconds.';
 
     await dictionaryLoading;
     if (!dictionaryRank){
       dictionaryRank = {};
       dictionary.forEach(function(w,i){ dictionaryRank[w] = i; });
     }
-    var w = originalImageData.width, h = originalImageData.height;
-    if (!confidenceCache) confidenceCache = computeConfidenceMap();
 
-    var candidates = [];
-    for (var ci=0; ci<searchConfigs.length; ci++){
-      findWordBtn.textContent = '🔍 Trying setting ' + (ci+1) + ' of ' + searchConfigs.length + '...';
-      var cfg = searchConfigs[ci];
-      var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
-      if (!r.keptComponents) continue;
-      ctx.putImageData(r.imageData, 0, 0);
-      var dataUrl = withWhiteMargin(canvas, 24);
-      try {
-        var result = await Tesseract.recognize(dataUrl, 'eng');
-        var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z]{2,}$/.test(t); });
-        tokens.forEach(function(tok){
-          var match = nearestDictionaryWord(tok.toLowerCase());
-          var tolerance = Math.max(1, Math.ceil(tok.length*0.4));
-          if (match && match.dist <= tolerance){
-            candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
+    var regions = markedRegions.length
+      ? markedRegions.map(function(r){ return { sx:r.sx, sy:r.sy, sw:r.sw, sh:r.sh }; })
+      : [{ sx:0, sy:0, sw:fullImageData.width, sh:fullImageData.height }];
+
+    var regionResults = [];
+    for (var ri=0; ri<regions.length; ri++){
+      var reg = regions[ri];
+      var tmpFull = document.createElement('canvas');
+      tmpFull.width = fullImageData.width; tmpFull.height = fullImageData.height;
+      tmpFull.getContext('2d').putImageData(fullImageData, 0, 0);
+      var regionData = tmpFull.getContext('2d').getImageData(reg.sx, reg.sy, reg.sw, reg.sh);
+
+      originalImageData = regionData; // so manual "See how it works" tools reflect the last region too
+      canvas.width = reg.sw; canvas.height = reg.sh;
+      ctx.putImageData(regionData, 0, 0);
+      confidenceCache = computeConfidenceMap();
+
+      var w = reg.sw, h = reg.sh;
+      var candidates = [];
+      for (var ci=0; ci<searchConfigs.length; ci++){
+        findWordBtn.textContent = '🔍 Region ' + (ri+1) + '/' + regions.length + ', setting ' + (ci+1) + '/' + searchConfigs.length + '...';
+        var cfg = searchConfigs[ci];
+        var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
+        if (!r.keptComponents) continue;
+        ctx.putImageData(r.imageData, 0, 0);
+        var dataUrl = withWhiteMargin(canvas, 24);
+        try {
+          var result = await Tesseract.recognize(dataUrl, 'eng');
+          var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z0-9]{1,}$/.test(t); });
+          tokens.forEach(function(tok){
+            if (/^[0-9]+$/.test(tok)){
+              candidates.push({ word: tok, dist: 0, conf: result.data.confidence, isNumber: true });
+              return;
+            }
+            if (tok.length < 2) return;
+            var match = nearestDictionaryWord(tok.toLowerCase());
+            var tolerance = Math.max(1, Math.ceil(tok.length*0.4));
+            if (match && match.dist <= tolerance){
+              candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
+            }
+          });
+        } catch(e){ /* skip this config on failure, keep trying the others */ }
+      }
+
+      // Targeted whitelist passes on the clearest single rendering (the config
+      // that kept the most stroke-shaped components) — one assuming it's a
+      // number, one assuming it's a word, since knowing the field type narrows
+      // the search space a lot more than a generic alphanumeric pass does.
+      var bestCfg = searchConfigs.reduce(function(best, cfg){
+        var rr = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
+        return (!best || rr.keptComponents > best.kept) ? { cfg:cfg, kept:rr.keptComponents, imageData:rr.imageData } : best;
+      }, null);
+      if (bestCfg && bestCfg.kept){
+        ctx.putImageData(bestCfg.imageData, 0, 0);
+        var bestDataUrl = withWhiteMargin(canvas, 24);
+        try {
+          var numResult = await recognizeWithWhitelist(bestDataUrl, '0123456789.,');
+          var numText = (numResult.data.text || '').replace(/[^0-9.,]/g,'').trim();
+          if (numText) candidates.push({ word: numText, dist: 0, conf: numResult.data.confidence, isNumber: true });
+        } catch(e){}
+        try {
+          var alphaResult = await recognizeWithWhitelist(bestDataUrl, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz');
+          var alphaTok = (alphaResult.data.text || '').trim().split(/\s+/)[0] || '';
+          if (alphaTok.length >= 2){
+            var am = nearestDictionaryWord(alphaTok.toLowerCase());
+            var atol = Math.max(1, Math.ceil(alphaTok.length*0.4));
+            if (am && am.dist <= atol) candidates.push({ word: am.word, dist: am.dist, conf: alphaResult.data.confidence });
           }
-        });
-      } catch(e){ /* skip this config on failure, keep trying the others */ }
+        } catch(e){}
+      }
+
+      var byWord = {};
+      candidates.forEach(function(c){
+        var freqRank = c.isNumber ? 0 : (dictionaryRank[c.word] || 5000);
+        var freqBonus = c.isNumber ? 5 : Math.max(0, 10 - freqRank/500);
+        var score = c.conf - c.dist*15 + freqBonus;
+        if (!byWord[c.word] || byWord[c.word] < score) byWord[c.word] = score;
+      });
+      var ranked = Object.keys(byWord).map(function(w2){ return {word:w2, score:byWord[w2]}; })
+        .sort(function(a,b){ return b.score-a.score; }).slice(0,3);
+      regionResults.push({ index: ri+1, ranked: ranked });
     }
 
     findWordBtn.disabled = false;
-    findWordBtn.textContent = '🔍 Find The Word';
+    findWordBtn.textContent = '🔍 Find The Word(s)';
 
-    var byWord = {};
-    candidates.forEach(function(c){
-      var freqRank = dictionaryRank[c.word] || 5000;
-      var freqBonus = Math.max(0, 10 - freqRank/500); // more common word -> small score boost
-      var score = c.conf - c.dist*15 + freqBonus;
-      if (!byWord[c.word] || byWord[c.word] < score) byWord[c.word] = score;
-    });
-    var ranked = Object.keys(byWord).map(function(w2){ return {word:w2, score:byWord[w2]}; })
-      .sort(function(a,b){ return b.score-a.score; }).slice(0,3);
-
-    if (ranked.length){
-      suggestionsBox.innerHTML = '<b>These might be your word:</b><br>' + ranked.map(function(r){ return r.word; }).join(', ')
-        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common English words, weighted by frequency — open "See how it works" below to inspect the raw reveal yourself.</span>';
-    } else {
-      suggestionsBox.innerHTML = 'No confident word match found. The underlying signal may be too weak or the redaction may be genuinely opaque.'
-        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Open "See how it works" below to inspect manually and try a repeat-photo test.</span>';
-    }
+    var html = regionResults.map(function(rr){
+      var label = regions.length > 1 ? ('<b>Region ' + rr.index + ':</b> ') : '<b>These might be your word:</b> ';
+      return label + (rr.ranked.length ? rr.ranked.map(function(r){ return r.word; }).join(', ') : 'no confident match found');
+    }).join('<br>');
+    suggestionsBox.innerHTML = html
+      + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common words and, separately, tried as a plain number — open "See how it works" below to inspect the raw reveal yourself.</span>';
   });
 
   function stdDevOf(arr){
@@ -1050,6 +1149,13 @@
     averageBtn.style.display = 'none';
     confidenceCache = null;
     suggestionsBox.style.display = 'none';
+    fullImageData = null;
+    markedRegions = [];
+    mctx.clearRect(0,0,markerCanvas.width,markerCanvas.height);
+    regionButtonsRow.style.display = 'none';
+    regionCountBox.style.display = 'none';
+    cropOverlay.style.display = 'none';
+    cropTip.style.display = 'none';
     stage.classList.remove('active');
     imageWrap.classList.remove('active');
     document.querySelector('main').classList.remove('photo-active');
