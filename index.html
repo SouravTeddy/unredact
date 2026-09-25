@@ -128,9 +128,18 @@
       <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
       <input type="range" id="minSizeSlider" min="2" max="60" value="6">
     </div>
+    <div class="slider-row" id="extentParams" style="display:none;">
+      <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
+      <input type="range" id="extentSlider" min="20" max="100" value="65">
+    </div>
 
     <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right — try to piece them into letters/words</div>
     <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
+
+    <div id="collageLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase; margin-top:6px;">Reassembled at true relative positions</div>
+    <div id="collageWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
+      <canvas id="collageCanvas" style="image-rendering:pixelated;"></canvas>
+    </div>
 
     <div class="channel-row">
       <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
@@ -454,6 +463,9 @@
   var minSizeSlider = document.getElementById('minSizeSlider');
   var minSizeVal = document.getElementById('minSizeVal');
   var denoiseParams = document.getElementById('denoiseParams');
+  var extentSlider = document.getElementById('extentSlider');
+  var extentVal = document.getElementById('extentVal');
+  var extentParams = document.getElementById('extentParams');
   var diagBox2 = document.getElementById('diagBox');
 
   function runDenoise(){
@@ -498,21 +510,34 @@
     }
     var minSize = parseInt(minSizeSlider.value,10);
     var minArea = minSize*minSize;
+    // Shape filter: real pen strokes are thin/curvy and don't fill their bounding
+    // box very much (extent = pixels / bbox area is low). A solid noise blob or a
+    // merged smudge tends to fill most of its box (extent close to 1). Rejecting
+    // high-extent components is a real, standard shape heuristic for telling
+    // "stroke-shaped" from "blob-shaped" — not just going on size alone anymore.
+    var maxExtent = parseInt(extentSlider.value,10) / 100;
+    function isKept(i){
+      var bboxArea = (bboxes[i].maxX-bboxes[i].minX+1) * (bboxes[i].maxY-bboxes[i].minY+1);
+      var extent = sizes[i] / bboxArea;
+      return sizes[i] >= minArea && extent <= maxExtent;
+    }
     var out = ctx.createImageData(w,h);
     var od = out.data;
     for (var p2=0, j=0; p2<w*h; p2++, j+=4){
       var lbl = labels[p2];
-      var keep = lbl>=0 && sizes[lbl] >= minArea;
+      var keep = lbl>=0 && isKept(lbl);
       var v = keep ? 0 : 255;
       od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
     }
     ctx.putImageData(out,0,0);
-    var keptComponents = sizes.filter(function(s){ return s>=minArea; }).length;
+    var keptComponents = 0;
+    for (var ci=0; ci<sizes.length; ci++) if (isKept(ci)) keptComponents++;
     diagBox2.style.display = 'block';
     diagBox2.textContent = 'found ' + nextLabel + ' connected blobs | kept ' + keptComponents
-      + ' as plausible strokes (>= ' + minArea + 'px) | removed ' + (nextLabel-keptComponents) + ' as noise specks';
+      + ' as stroke-shaped (size>=' + minArea + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (nextLabel-keptComponents) + ' as noise';
 
-    renderChunkStrip(out, w, h, sizes, bboxes, minArea);
+    renderChunkStrip(out, w, h, sizes, bboxes, isKept);
+    renderCollage(out, w, h, sizes, bboxes, isKept);
   }
 
   // ---- "Collage" strip: crop each surviving pattern into its own tile,
@@ -521,11 +546,11 @@
   var chunkStrip = document.getElementById('chunkStrip');
   var chunkStripLabel = document.getElementById('chunkStripLabel');
 
-  function renderChunkStrip(binarizedImageData, w, h, sizes, bboxes, minArea){
+  function renderChunkStrip(binarizedImageData, w, h, sizes, bboxes, isKept){
     chunkStrip.innerHTML = '';
     var kept = [];
     for (var i=0;i<sizes.length;i++){
-      if (sizes[i] >= minArea) kept.push(bboxes[i]);
+      if (isKept(i)) kept.push(bboxes[i]);
     }
     if (!kept.length){
       chunkStrip.style.display = 'none';
@@ -567,12 +592,74 @@
     chunkStripLabel.style.display = 'block';
   }
 
+  // ---- True-position reassembly: place every surviving stroke back at its
+  // actual relative (x,y) on a canvas cropped to just the region that
+  // contains them. Unlike the left-to-right strip, this preserves real
+  // spatial relationships — the actual test of whether the pieces form a
+  // recognizable letter/word shape together, not just individually. ----
+  var collageWrap = document.getElementById('collageWrap');
+  var collageLabel = document.getElementById('collageLabel');
+  var collageCanvas = document.getElementById('collageCanvas');
+
+  function renderCollage(binarizedImageData, w, h, sizes, bboxes, isKept){
+    var keptBoxes = [];
+    for (var i=0;i<sizes.length;i++) if (isKept(i)) keptBoxes.push(bboxes[i]);
+    if (!keptBoxes.length){
+      collageWrap.style.display = 'none';
+      collageLabel.style.display = 'none';
+      return;
+    }
+    var pad = 6;
+    var unionMinX = Math.min.apply(null, keptBoxes.map(function(b){return b.minX;})) - pad;
+    var unionMaxX = Math.max.apply(null, keptBoxes.map(function(b){return b.maxX;})) + pad;
+    var unionMinY = Math.min.apply(null, keptBoxes.map(function(b){return b.minY;})) - pad;
+    var unionMaxY = Math.max.apply(null, keptBoxes.map(function(b){return b.maxY;})) + pad;
+    unionMinX = Math.max(0, unionMinX); unionMinY = Math.max(0, unionMinY);
+    unionMaxX = Math.min(w-1, unionMaxX); unionMaxY = Math.min(h-1, unionMaxY);
+    var cw = unionMaxX - unionMinX + 1, ch = unionMaxY - unionMinY + 1;
+
+    var scale = Math.min(6, Math.max(1, Math.round(300/cw))); // upscale small crops for visibility
+    collageCanvas.width = cw * scale;
+    collageCanvas.height = ch * scale;
+    var cctx = collageCanvas.getContext('2d');
+    cctx.imageSmoothingEnabled = false;
+    cctx.fillStyle = '#fff';
+    cctx.fillRect(0,0,collageCanvas.width,collageCanvas.height);
+
+    // draw the crop at native res first, then it'll be visually scaled by canvas size above —
+    // instead, build a native-res offscreen buffer and drawImage it scaled up for crisp pixels.
+    var tmp = document.createElement('canvas');
+    tmp.width = cw; tmp.height = ch;
+    var tctx = tmp.getContext('2d');
+    var tileData = tctx.createImageData(cw, ch);
+    for (var yy=0; yy<ch; yy++){
+      for (var xx=0; xx<cw; xx++){
+        var srcIdx = ((unionMinY+yy)*w + (unionMinX+xx)) * 4;
+        var dstIdx = (yy*cw + xx) * 4;
+        tileData.data[dstIdx] = binarizedImageData.data[srcIdx];
+        tileData.data[dstIdx+1] = binarizedImageData.data[srcIdx+1];
+        tileData.data[dstIdx+2] = binarizedImageData.data[srcIdx+2];
+        tileData.data[dstIdx+3] = 255;
+      }
+    }
+    tctx.putImageData(tileData, 0, 0);
+    cctx.drawImage(tmp, 0, 0, cw, ch, 0, 0, cw*scale, ch*scale);
+
+    collageWrap.style.display = 'block';
+    collageLabel.style.display = 'block';
+  }
+
   document.getElementById('denoiseBtn').addEventListener('click', function(){
     denoiseParams.style.display = 'flex';
+    extentParams.style.display = 'flex';
     runDenoise();
   });
   minSizeSlider.addEventListener('input', function(){
     minSizeVal.textContent = minSizeSlider.value;
+    runDenoise();
+  });
+  extentSlider.addEventListener('input', function(){
+    extentVal.textContent = extentSlider.value;
     runDenoise();
   });
 
