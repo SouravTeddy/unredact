@@ -112,79 +112,86 @@
   <div id="stage">
     <div id="dragHint"></div>
 
-    <button class="btn primary" id="revealBtn" style="width:100%;">🔎 Reveal Text (auto)</button>
+    <button class="btn primary" id="findWordBtn" style="width:100%; font-size:1.05rem; padding:16px;">🔍 Find The Word</button>
+    <div class="tip-card" id="suggestionsBox" style="display:none;"></div>
 
-    <div class="slider-row">
-      <label>Strictness <span class="val mono" id="strictVal">50</span></label>
-      <input type="range" id="strictSlider" min="0" max="100" value="50">
-    </div>
+    <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
 
-    <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
+    <details id="powerDetails">
+      <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">⚙️ See how it works / manual controls</summary>
 
-    <div class="channel-row">
-      <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
-    </div>
-    <div class="slider-row" id="denoiseParams" style="display:none;">
-      <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
-      <input type="range" id="minSizeSlider" min="2" max="60" value="6">
-    </div>
-    <div class="slider-row" id="extentParams" style="display:none;">
-      <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
-      <input type="range" id="extentSlider" min="20" max="100" value="65">
-    </div>
-
-    <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right — try to piece them into letters/words</div>
-    <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
-
-    <div id="collageLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase; margin-top:6px;">Reassembled at true relative positions</div>
-    <div id="collageWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
-      <canvas id="collageCanvas" style="image-rendering:pixelated;"></canvas>
-    </div>
-
-    <div class="channel-row">
-      <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
-    </div>
-    <div class="tip-card mono" id="ocrBox" style="display:none; font-size:0.72rem;"></div>
-
-    <div class="channel-row">
-      <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
-      <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
-    </div>
-
-    <details id="advancedDetails">
-      <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">⚙️ Advanced manual controls</summary>
-
-      <div class="channel-row" id="channelRow" style="margin-top:8px;">
-        <div class="chip active" data-ch="auto">AUTO ✦</div>
-        <div class="chip" data-ch="r">RED</div>
-        <div class="chip" data-ch="g">GREEN</div>
-        <div class="chip" data-ch="b">BLUE</div>
-        <div class="chip" data-ch="rg">R−G</div>
-        <div class="chip" data-ch="rb">R−B</div>
-        <div class="chip" data-ch="gb">G−B</div>
-        <div class="chip" data-ch="sat">SAT</div>
-        <div class="chip" data-ch="val">VAL</div>
-      </div>
+      <button class="btn primary" id="revealBtn" style="width:100%; margin-top:8px;">🔎 Reveal Text (auto)</button>
 
       <div class="slider-row">
-        <label>Black point <span class="val mono" id="blackVal">0</span></label>
-        <input type="range" id="blackSlider" min="0" max="255" value="0">
+        <label>Strictness <span class="val mono" id="strictVal">50</span></label>
+        <input type="range" id="strictSlider" min="0" max="100" value="50">
       </div>
-      <div class="slider-row">
-        <label>White point <span class="val mono" id="whiteVal">255</span></label>
-        <input type="range" id="whiteSlider" min="0" max="255" value="255">
+
+      <div class="tip-card mono" id="diagBox" style="display:none; font-size:0.72rem;"></div>
+
+      <div class="channel-row">
+        <button class="btn secondary" id="denoiseBtn" style="flex:1;">🧩 Isolate stroke patterns (remove speckle noise)</button>
+      </div>
+      <div class="slider-row" id="denoiseParams" style="display:none;">
+        <label>Minimum stroke size <span class="val mono" id="minSizeVal">6</span> px</label>
+        <input type="range" id="minSizeSlider" min="2" max="60" value="6">
+      </div>
+      <div class="slider-row" id="extentParams" style="display:none;">
+        <label>Max fill ratio, reject solid blobs <span class="val mono" id="extentVal">65</span>%</label>
+        <input type="range" id="extentSlider" min="20" max="100" value="65">
+      </div>
+
+      <div id="chunkStripLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase;">Pattern chunks, left to right</div>
+      <div id="chunkStrip" style="display:none; overflow-x:auto; gap:6px; padding:8px 0; -webkit-overflow-scrolling:touch;"></div>
+
+      <div id="collageLabel" style="display:none; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.72rem; color:var(--ink-faint); letter-spacing:0.05em; text-transform:uppercase; margin-top:6px;">Reassembled at true relative positions</div>
+      <div id="collageWrap" style="display:none; background:#fff; border-radius:12px; border:1px solid var(--border); padding:12px; overflow-x:auto;">
+        <canvas id="collageCanvas" style="image-rendering:pixelated;"></canvas>
       </div>
 
       <div class="channel-row">
-        <div class="chip" id="binarizeToggle" style="flex:1;">🔲 Sharpen text (adaptive threshold)</div>
+        <button class="btn secondary" id="ocrBtn" style="flex:1;">🔤 Try OCR on this result</button>
       </div>
-      <div class="slider-row" id="binarizeParams" style="display:none;">
-        <label>Sensitivity <span class="val mono" id="sensVal">6</span></label>
-        <input type="range" id="sensSlider" min="1" max="60" value="6">
-      </div>
-    </details>
+      <div class="tip-card mono" id="ocrBox" style="display:none; font-size:0.72rem;"></div>
 
-    <button class="btn secondary" id="resetBtn">↺ Take another photo</button>
+      <div class="channel-row">
+        <button class="btn primary" id="addFrameBtn" style="flex:1;">📷 Add another shot of the same spot</button>
+        <button class="btn secondary" id="averageBtn" style="display:none;">🧮 Average &amp; analyze</button>
+      </div>
+
+      <details id="advancedDetails">
+        <summary style="cursor:pointer; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.82rem; letter-spacing:0.04em; text-transform:uppercase; padding:8px 0;">Manual channel/levels controls</summary>
+
+        <div class="channel-row" id="channelRow" style="margin-top:8px;">
+          <div class="chip active" data-ch="auto">AUTO ✦</div>
+          <div class="chip" data-ch="r">RED</div>
+          <div class="chip" data-ch="g">GREEN</div>
+          <div class="chip" data-ch="b">BLUE</div>
+          <div class="chip" data-ch="rg">R−G</div>
+          <div class="chip" data-ch="rb">R−B</div>
+          <div class="chip" data-ch="gb">G−B</div>
+          <div class="chip" data-ch="sat">SAT</div>
+          <div class="chip" data-ch="val">VAL</div>
+        </div>
+
+        <div class="slider-row">
+          <label>Black point <span class="val mono" id="blackVal">0</span></label>
+          <input type="range" id="blackSlider" min="0" max="255" value="0">
+        </div>
+        <div class="slider-row">
+          <label>White point <span class="val mono" id="whiteVal">255</span></label>
+          <input type="range" id="whiteSlider" min="0" max="255" value="255">
+        </div>
+
+        <div class="channel-row">
+          <div class="chip" id="binarizeToggle" style="flex:1;">🔲 Sharpen text (adaptive threshold)</div>
+        </div>
+        <div class="slider-row" id="binarizeParams" style="display:none;">
+          <label>Sensitivity <span class="val mono" id="sensVal">6</span></label>
+          <input type="range" id="sensSlider" min="1" max="60" value="6">
+        </div>
+      </details>
+    </details>
   </div>
 
   <div class="empty" id="emptyState">No photo yet — take or upload one to see the result here.</div>
@@ -468,21 +475,21 @@
   var extentParams = document.getElementById('extentParams');
   var diagBox2 = document.getElementById('diagBox');
 
-  function runDenoise(){
-    if (!confidenceCache) return;
-    var strictness = parseInt(strictSlider.value,10)/100;
+  // Pure, parameterized version of the whole reveal->denoise pipeline — no DOM
+  // reads, so it can be called in a loop with many different settings (used by
+  // the one-tap "Find The Word" flow below), as well as by the manual sliders.
+  function computeFilteredBinarized(confidence, strictness, minSize, maxExtent, w, h){
     var softness = 0.15;
-    var w = originalImageData.width, h = originalImageData.height;
     var isBlack = new Uint8Array(w*h);
-    for (var p=0;p<confidenceCache.length;p++){
-      var c = confidenceCache[p];
+    for (var p=0;p<confidence.length;p++){
+      var c = confidence[p];
       var t = (c - strictness + softness)/(2*softness);
       t = Math.max(0, Math.min(1,t));
       isBlack[p] = (255*(1-t)) < 128 ? 1 : 0;
     }
     var labels = new Int32Array(w*h).fill(-1);
     var sizes = [];
-    var bboxes = []; // {minX,maxX,minY,maxY} per label
+    var bboxes = [];
     var stack = [];
     var nextLabel = 0;
     for (var start=0; start<w*h; start++){
@@ -508,20 +515,13 @@
         nextLabel++;
       }
     }
-    var minSize = parseInt(minSizeSlider.value,10);
     var minArea = minSize*minSize;
-    // Shape filter: real pen strokes are thin/curvy and don't fill their bounding
-    // box very much (extent = pixels / bbox area is low). A solid noise blob or a
-    // merged smudge tends to fill most of its box (extent close to 1). Rejecting
-    // high-extent components is a real, standard shape heuristic for telling
-    // "stroke-shaped" from "blob-shaped" — not just going on size alone anymore.
-    var maxExtent = parseInt(extentSlider.value,10) / 100;
     function isKept(i){
       var bboxArea = (bboxes[i].maxX-bboxes[i].minX+1) * (bboxes[i].maxY-bboxes[i].minY+1);
       var extent = sizes[i] / bboxArea;
       return sizes[i] >= minArea && extent <= maxExtent;
     }
-    var out = ctx.createImageData(w,h);
+    var out = new ImageData(w,h);
     var od = out.data;
     for (var p2=0, j=0; p2<w*h; p2++, j+=4){
       var lbl = labels[p2];
@@ -529,15 +529,24 @@
       var v = keep ? 0 : 255;
       od[j]=od[j+1]=od[j+2]=v; od[j+3]=255;
     }
-    ctx.putImageData(out,0,0);
     var keptComponents = 0;
     for (var ci=0; ci<sizes.length; ci++) if (isKept(ci)) keptComponents++;
-    diagBox2.style.display = 'block';
-    diagBox2.textContent = 'found ' + nextLabel + ' connected blobs | kept ' + keptComponents
-      + ' as stroke-shaped (size>=' + minArea + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (nextLabel-keptComponents) + ' as noise';
+    return { imageData: out, sizes: sizes, bboxes: bboxes, isKept: isKept, nextLabel: nextLabel, keptComponents: keptComponents };
+  }
 
-    renderChunkStrip(out, w, h, sizes, bboxes, isKept);
-    renderCollage(out, w, h, sizes, bboxes, isKept);
+  function runDenoise(){
+    if (!confidenceCache) return;
+    var w = originalImageData.width, h = originalImageData.height;
+    var strictness = parseInt(strictSlider.value,10)/100;
+    var minSize = parseInt(minSizeSlider.value,10);
+    var maxExtent = parseInt(extentSlider.value,10)/100;
+    var r = computeFilteredBinarized(confidenceCache, strictness, minSize, maxExtent, w, h);
+    ctx.putImageData(r.imageData, 0, 0);
+    diagBox2.style.display = 'block';
+    diagBox2.textContent = 'found ' + r.nextLabel + ' connected blobs | kept ' + r.keptComponents
+      + ' as stroke-shaped (size>=' + minSize*minSize + 'px, fill<=' + Math.round(maxExtent*100) + '%) | removed ' + (r.nextLabel-r.keptComponents) + ' as noise';
+    renderChunkStrip(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
+    renderCollage(r.imageData, w, h, r.sizes, r.bboxes, r.isKept);
   }
 
   // ---- "Collage" strip: crop each surviving pattern into its own tile,
@@ -686,6 +695,116 @@
     }
   });
 
+  // ---- Dictionary correction: turns raw OCR gibberish into real-word guesses ----
+  // OCR on a damaged/noisy image often gets individual letters half-right —
+  // close in shape to the real letter but not exact. Rather than showing that
+  // raw garbage, this matches each OCR token against a list of ~10,000 common
+  // English words using edit distance (Levenshtein), and only surfaces a
+  // candidate if it's actually close to a real word — otherwise it's discarded
+  // as noise, not guessed at.
+  var dictionary = null;
+  var dictionaryLoading = fetch('https://cdn.jsdelivr.net/gh/first20hours/google-10000-english@master/google-10000-english-no-swears.txt')
+    .then(function(r){ return r.text(); })
+    .then(function(txt){ dictionary = txt.split('\n').map(function(w){ return w.trim().toLowerCase(); }).filter(Boolean); })
+    .catch(function(){ dictionary = []; });
+
+  function levenshtein(a, b){
+    var m = a.length, n = b.length;
+    var d = [];
+    for (var i=0;i<=m;i++) d.push([i]);
+    for (var j=0;j<=n;j++) d[0][j] = j;
+    for (var i2=1;i2<=m;i2++){
+      for (var j2=1;j2<=n;j2++){
+        var cost = a[i2-1] === b[j2-1] ? 0 : 1;
+        d[i2][j2] = Math.min(d[i2-1][j2]+1, d[i2][j2-1]+1, d[i2-1][j2-1]+cost);
+      }
+    }
+    return d[m][n];
+  }
+
+  function nearestDictionaryWord(token){
+    if (!dictionary || !dictionary.length) return null;
+    var best = null, bestDist = Infinity;
+    for (var i=0;i<dictionary.length;i++){
+      var w = dictionary[i];
+      if (Math.abs(w.length - token.length) > 3) continue; // quick skip, saves time
+      var dist = levenshtein(token, w);
+      if (dist < bestDist){ bestDist = dist; best = w; }
+      if (bestDist === 0) break;
+    }
+    return best ? { word: best, dist: bestDist } : null;
+  }
+
+  // ---- One-tap "Find The Word": tries several reveal/denoise settings
+  // automatically, OCRs each, and keeps only the results that match real
+  // English words — surfacing just the best couple of guesses instead of
+  // every knob in the pipeline. ----
+  var findWordBtn = document.getElementById('findWordBtn');
+  var suggestionsBox = document.getElementById('suggestionsBox');
+
+  var searchConfigs = [
+    { strict:0.30, minSize:4, maxExtent:0.50 },
+    { strict:0.40, minSize:5, maxExtent:0.55 },
+    { strict:0.50, minSize:6, maxExtent:0.60 },
+    { strict:0.60, minSize:8, maxExtent:0.65 },
+    { strict:0.35, minSize:4, maxExtent:0.75 }
+  ];
+
+  findWordBtn.addEventListener('click', async function(){
+    if (!originalImageData){
+      suggestionsBox.style.display = 'block';
+      suggestionsBox.textContent = 'Take or upload a photo first.';
+      return;
+    }
+    findWordBtn.disabled = true;
+    suggestionsBox.style.display = 'block';
+    suggestionsBox.textContent = 'Analyzing... this tries several settings automatically and can take 20-30 seconds.';
+
+    await dictionaryLoading;
+    var w = originalImageData.width, h = originalImageData.height;
+    if (!confidenceCache) confidenceCache = computeConfidenceMap();
+
+    var candidates = [];
+    for (var ci=0; ci<searchConfigs.length; ci++){
+      findWordBtn.textContent = '🔍 Trying setting ' + (ci+1) + ' of ' + searchConfigs.length + '...';
+      var cfg = searchConfigs[ci];
+      var r = computeFilteredBinarized(confidenceCache, cfg.strict, cfg.minSize, cfg.maxExtent, w, h);
+      if (!r.keptComponents) continue;
+      ctx.putImageData(r.imageData, 0, 0);
+      var dataUrl = canvas.toDataURL();
+      try {
+        var result = await Tesseract.recognize(dataUrl, 'eng');
+        var tokens = (result.data.text || '').split(/\s+/).filter(function(t){ return /^[A-Za-z]{2,}$/.test(t); });
+        tokens.forEach(function(tok){
+          var match = nearestDictionaryWord(tok.toLowerCase());
+          var tolerance = Math.max(1, Math.ceil(tok.length*0.4));
+          if (match && match.dist <= tolerance){
+            candidates.push({ word: match.word, dist: match.dist, conf: result.data.confidence });
+          }
+        });
+      } catch(e){ /* skip this config on failure, keep trying the others */ }
+    }
+
+    findWordBtn.disabled = false;
+    findWordBtn.textContent = '🔍 Find The Word';
+
+    var byWord = {};
+    candidates.forEach(function(c){
+      var score = c.conf - c.dist*15;
+      if (!byWord[c.word] || byWord[c.word] < score) byWord[c.word] = score;
+    });
+    var ranked = Object.keys(byWord).map(function(w2){ return {word:w2, score:byWord[w2]}; })
+      .sort(function(a,b){ return b.score-a.score; }).slice(0,3);
+
+    if (ranked.length){
+      suggestionsBox.innerHTML = '<b>These might be your word:</b><br>' + ranked.map(function(r){ return r.word; }).join(', ')
+        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Matched against common English words — open "See how it works" below to inspect the raw reveal yourself.</span>';
+    } else {
+      suggestionsBox.innerHTML = 'No confident word match found. The underlying signal may be too weak or the redaction may be genuinely opaque.'
+        + '<br><br><span style="color:var(--ink-faint); font-size:0.78rem;">Open "See how it works" below to inspect manually and try a repeat-photo test.</span>';
+    }
+  });
+
   function stdDevOf(arr){
     var n=arr.length, sum=0, sumSq=0;
     for (var i=0;i<n;i++){ sum+=arr[i]; sumSq+=arr[i]*arr[i]; }
@@ -800,6 +919,8 @@
     fixedW = null; fixedH = null;
     frameCountBox.style.display = 'none';
     averageBtn.style.display = 'none';
+    confidenceCache = null;
+    suggestionsBox.style.display = 'none';
     stage.classList.remove('active');
     imageWrap.classList.remove('active');
     document.querySelector('main').classList.remove('photo-active');
